@@ -1,0 +1,6 @@
+# Local app data and environment-specific outputs
+outputs/
+work/
+app/data/
+app/node_modules/
+.DS_Store
