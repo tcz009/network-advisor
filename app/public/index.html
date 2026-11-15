@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b1117">
+  <title>Network Advisor</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand-mark"><span class="brand-orbit"></span><span class="brand-core"></span></div>
+      <div class="rail-rule"></div>
+      <nav class="rail-nav" aria-label="Dashboard sections">
+        <button class="rail-button active" id="nav-map" aria-label="Network map" aria-current="page" title="Network map"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M11 7.4 6 15.6M13 7.4l5 8.2M7.5 18h9"/></svg></button>
+        <button class="rail-button" id="nav-devices" aria-label="Device list" title="Device list"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></button>
+      </nav>
+      <div class="rail-bottom"><span class="secure-dot"></span></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="crumb"><span class="crumb-dot"></span> HOME NETWORK <span class="crumb-slash">/</span> LIVE MAP</div>
+        <div class="top-status"><span class="pulse-dot" id="connection-indicator"></span><span id="connection-status">CONNECTING TO NAS</span><span class="top-divider"></span><span class="lock-icon">◆</span> LAN HOSTED</div>
+      </header>
+
+      <section class="page-heading">
+        <div>
+          <div class="eyebrow">YOUR NETWORK, MADE VISIBLE</div>
+          <h1>Network picture<span class="title-period">.</span></h1>
+          <p class="intro">See what is connected, how it links together, and where performance may be dropping.</p>
+        </div>
+        <div class="heading-actions">
+          <div class="last-check"><span class="mini-label">LAST CHECK</span><strong id="last-check">Waiting for first check</strong></div>
+          <button id="run-check" class="primary-button"><span class="button-spark">✳</span> Run network check <span class="button-arrow">↗</span></button>
+        </div>
+      </section>
+
+      <section class="metric-grid" aria-label="Network summary">
+        <article class="metric-card"><div class="metric-top"><span class="metric-label">DASHBOARDS REPORTING</span><span class="metric-glyph green-glyph">◉</span></div><div class="metric-value" id="online-count">—<span class="metric-unit"> devices</span></div><div class="metric-foot" id="device-foot">Devices currently reporting to the NAS</div></article>
+        <article class="metric-card"><div class="metric-top"><span class="metric-label">NAS ↔ ROUTER</span><span class="metric-glyph">⌁</span></div><div class="metric-value" id="router-rtt">—<span class="metric-unit"> ms</span></div><div class="metric-foot" id="router-foot">Wired connection check</div></article>
+        <article class="metric-card"><div class="metric-top"><span class="metric-label">NAS ↔ INTERNET</span><span class="metric-glyph">↗</span></div><div class="metric-value" id="internet-rtt">—<span class="metric-unit"> ms</span></div><div class="metric-foot" id="internet-foot">Response time to test point</div></article>
+        <article class="metric-card"><div class="metric-top"><span class="metric-label">NAS NEIGHBOURS SEEN</span><span class="metric-glyph violet-glyph">✣</span></div><div class="metric-value" id="seen-count">—<span class="metric-unit"> entries</span></div><div class="metric-foot">Recent local entries, not a full inventory</div></article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel map-panel">
+          <div class="panel-heading"><div><div class="eyebrow">KNOWN NETWORK MAP</div><h2>How things connect</h2></div><div class="map-legend"><span><i class="legend-line active-line"></i> Checked from NAS</span><span><i class="legend-line unknown-line"></i> Route not identified</span></div></div>
+          <div class="map-stage" id="map-stage">
+            <div class="map-wash wash-one"></div><div class="map-wash wash-two"></div>
+            <svg class="map-lines" viewBox="0 0 1000 500" preserveAspectRatio="none" aria-hidden="true">
+              <path class="line path-internet" d="M500 92 L500 163"/><path class="line path-router" d="M500 235 L500 310"/>
+              <path class="line path-clients" d="M500 205 C420 265 315 345 225 421"/><path class="line path-clients" d="M500 205 C580 265 685 345 775 421"/>
+              <path class="line path-power" d="M610 190 C700 225 790 280 830 325"/>
+            </svg>
+            <div class="map-label label-internet"><span class="node-icon globe-icon">◎</span><span class="node-title">Internet</span><span class="node-sub" id="map-internet">Waiting for check</span></div>
+            <div class="map-label label-router"><span class="node-icon router-icon"><svg viewBox="0 0 28 28"><rect x="4" y="10" width="20" height="12" rx="3"/><path d="M9 10V7m10 3V7M9 16h.01M14 16h.01M19 16h.01"/></svg></span><span class="node-title">Router</span><span class="node-sub" id="map-router">Gateway not found yet</span></div>
+            <div class="map-label label-nas"><span class="node-icon nas-icon"><svg viewBox="0 0 28 28"><rect x="6" y="4" width="16" height="20" rx="3"/><path d="M10 9h8M10 14h8M10 19h4"/><circle cx="18" cy="19" r=".8"/></svg></span><span class="node-title">OMV NAS</span><span class="node-sub">Ethernet · advisor host</span></div>
+            <div class="client-node client-left" id="client-left"><span class="client-icon"><svg viewBox="0 0 28 28"><rect x="5" y="3.5" width="18" height="21" rx="4"/><path d="M11 20.5h6"/></svg></span><span class="client-name">Waiting for device</span><span class="client-rtt">Open dashboard on phone</span></div>
+            <div class="client-node client-right" id="client-right"><span class="client-icon"><svg viewBox="0 0 28 28"><rect x="3" y="5" width="22" height="15" rx="2"/><path d="M10 24h8m-4-4v4"/></svg></span><span class="client-name">Waiting for device</span><span class="client-rtt">Open dashboard on Mac</span></div>
+            <div class="power-node" id="power-node"><span class="power-icon">⌁</span><span><b>Powerline link</b><small>Not identified yet</small></span><span class="unknown-pill">UNKNOWN</span></div>
+            <div class="map-caption"><span class="caption-dot"></span><span id="map-caption-text">Paths are approximate; router, access point, and powerline hops are not mapped yet.</span><span id="map-extra"></span></div>
+          </div>
+          <div class="map-footer"><span><span class="footer-led"></span> MAP UPDATES AUTOMATICALLY</span><span id="map-footer-time">Waiting for first report</span></div>
+          <div class="device-controls"><div class="device-controls-copy"><strong>This browser’s device</strong><span>Set the link type yourself; the browser cannot detect it reliably.</span></div><div class="device-controls-fields"><input id="device-name" aria-label="Name for this device" maxlength="40"><select id="connection-type" aria-label="Connection type for this device"><option>Unknown</option><option>Wi-Fi</option><option>Ethernet</option><option>Powerline</option></select><button id="save-device" class="small-button">Save device</button></div></div>
+        </article>
+
+        <aside class="panel advisor-panel">
+          <div class="panel-heading"><div><div class="eyebrow">NETWORK ADVISOR</div><h2>What we notice</h2></div><span class="advisor-badge">STATUS</span></div>
+          <div id="findings" class="findings"><div class="empty-finding"><span class="finding-icon">✳</span><div><strong>Building your picture</strong><p>Run a check to test the NAS connection. Open this page on your other devices to add them to the map.</p></div></div></div>
+          <div class="advisor-note"><span class="info-icon">i</span><span>Findings include where the check ran, so you can tell what was measured and what still needs a closer look.</span></div>
+        </aside>
+      </section>
+
+      <section class="lower-grid">
+        <article class="panel devices-panel"><div class="panel-heading"><div><div class="eyebrow">BROWSERS REPORTING TO THE NAS</div><h2>Network nodes</h2></div><span id="nodes-total" class="count-badge">0</span></div>
+          <div class="node-table-wrap"><table><thead><tr><th>DEVICE</th><th>CONNECTION</th><th>BROWSER ↔ NAS</th><th>LAST SEEN</th><th>STATUS</th></tr></thead><tbody id="nodes-table"><tr><td class="empty-row" colspan="5">Open this page on your phone or MacBook to add it to the map.</td></tr></tbody></table></div>
+        </article>
+        <article class="panel seen-panel"><div class="panel-heading"><div><div class="eyebrow">LOCAL NETWORK</div><h2>Other devices seen</h2></div><span class="subtle-badge">PASSIVE</span></div><div id="arp-list" class="arp-list"><p class="muted-copy">The NAS neighbour table will show devices it has recently communicated with.</p></div><div class="passive-note">This list is not a full scan. Devices appear when the NAS has recently seen them.</div></article>
+      </section>
+      <footer class="page-footer"><span>NETWORK ADVISOR <b>·</b> EARLY BUILD</span><span>Hosted by your NAS <b>·</b> Device labels and recent measurements are stored there</span></footer>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
