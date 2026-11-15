@@ -1,0 +1,7 @@
+{
+  "name": "network-advisor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A private home network map and advisor for OpenMediaVault",
+  "scripts": { "start": "node server.js" }
+}
