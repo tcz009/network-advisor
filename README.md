@@ -32,7 +32,7 @@ For OMV setup, see the [OMV Compose plugin guide](https://wiki.omv-extras.org/do
 
 ## Install on OMV using SSH
 
-This is the shortest route when Docker Compose is installed. Replace `YOUR-GITHUB-OWNER` with the GitHub account or organization that hosts this repository.
+This is the shortest route when Docker Compose is installed.
 
 1. Connect to the NAS over SSH and change to a folder where you keep application projects.
 2. Clone the repository and start the app:
