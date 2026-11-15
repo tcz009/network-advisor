@@ -1,0 +1,26 @@
+services:
+  network-advisor:
+    build: .
+    container_name: network-advisor
+    network_mode: host
+    environment:
+      PORT: "8090"
+      DATA_DIR: /data
+      BIND_HOST: 0.0.0.0
+      CHECK_TARGET: "1.1.1.1"
+      CHECK_HOSTNAME: "cloudflare.com"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    volumes:
+      - network-advisor-data:/data
+    restart: unless-stopped
+
+volumes:
+  network-advisor-data:
