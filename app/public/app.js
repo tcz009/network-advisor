@@ -272,7 +272,10 @@ function drawMapLines() {
   // Rows connect through a spine down the left edge. A centre trunk would run
   // straight through the row above, which is what made the first attempt look
   // like the cards were strung on a wire.
-  const SPINE_X = 22;
+  // Derived from the cards rather than fixed: a full row starts further left
+  // than a short one, and a fixed spine ended up inside the leftmost card.
+  const leftMost = Math.min(...rows.flatMap(row => row.items.map(leaf => leaf.box.left)), n.cx);
+  const SPINE_X = Math.max(4, Math.round(leftMost) - 10);
   const buses = rows.map(row => ({
     top: row.top,
     y: row.top - BUS_GAP,
