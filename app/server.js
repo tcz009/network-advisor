@@ -292,6 +292,19 @@ function summariseLoad(loadText, cores) {
 
 /* ------------------------------------------------------------ host readings */
 
+// The address this host holds on an interface, so a map can tell a sensor's own
+// entry in the neighbour table apart from a different device on the same LAN.
+function localAddress(ifaceName) {
+  const candidates = [];
+  for (const [name, entries] of Object.entries(os.networkInterfaces() || {})) {
+    for (const entry of entries || []) {
+      if (entry.family === 'IPv4' && !entry.internal) candidates.push({ iface: name, address: entry.address });
+    }
+  }
+  const match = candidates.find(entry => entry.iface === ifaceName);
+  return (match || candidates[0] || {}).address || null;
+}
+
 function readGateway() {
   try {
     return chooseGateway(parseGatewayRouteList(fs.readFileSync('/proc/net/route', 'utf8')));
@@ -463,6 +476,7 @@ async function collectReadings() {
   ]);
   const devices = await enrichDevices(neighbourDevices(readArpTable(), gateway?.iface));
   return {
+    address: localAddress(gateway?.iface),
     gateway: gateway?.address || null,
     iface: gateway?.iface || null,
     tunnel: Boolean(gateway?.isTunnel),
@@ -601,6 +615,7 @@ function sanitiseReport(body) {
     label: rawName,
     version: cleanText(body.version, 20) || null,
     platform: cleanText(body.platform, 40) || null,
+    address: isIpv4(body.address) ? body.address : null,
     gateway: isIpv4(body.gateway) ? body.gateway : null,
     iface: cleanText(body.iface, 20) || null,
     tunnel: Boolean(body.tunnel),
@@ -681,6 +696,7 @@ async function startAgent() {
         name: AGENT_NAME,
         version: VERSION,
         platform: `${os.type()} ${os.arch()}`,
+        address: readings.address,
         gateway: readings.gateway,
         iface: readings.iface,
         tunnel: readings.tunnel,
@@ -740,6 +756,7 @@ async function handle(req, res) {
       app: 'Network Advisor',
       version: VERSION,
       host: os.hostname(),
+      address: localAddress(gateway?.iface),
       gateway: gateway?.address || null,
       iface: gateway?.iface || null,
       load: readLoad(),

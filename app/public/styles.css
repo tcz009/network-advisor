@@ -45,3 +45,9 @@ button,input,select{font:inherit}button:focus-visible,input:focus-visible,select
 .row-delete:hover{border-color:#f08080;color:#f08080}
 .row-delete:disabled{opacity:.4;cursor:default}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* Compact chips for devices that are seen but do not report themselves. */
+.map-leaf.device{width:auto;max-width:180px;flex-direction:row;flex-wrap:wrap;align-items:center;gap:2px 6px;padding:6px 9px;background:#121b23;border-color:#1e2b35}
+.map-leaf.device .leaf-icon{color:#4d6b73;font-size:13px}
+.map-leaf.device .leaf-name{font-size:9px;font-weight:500;max-width:150px}
+.map-leaf.device .leaf-sub{font-size:8px;color:#657681;text-align:left}

@@ -140,6 +140,7 @@ function mapLeaves(data) {
     lines.push(`to hub ${toHub || 'not measured'}`);
     return {
       kind: 'sensor',
+      address: agent.address || null,
       name: agent.label || agent.name,
       online: Boolean(agent.online),
       measured: Boolean(agent.online) && (agent.hub?.avgMs != null || agent.router?.avgMs != null),
@@ -159,9 +160,23 @@ function mapLeaves(data) {
       lines: [`to NAS ${fmtMs(node.browserRttMs)}`, node.connection && node.connection !== 'Unknown' ? node.connection : (node.deviceType || 'device')]
     }));
 
+  // Everything else the NAS has seen, so the picture is the network and not
+  // just the hosts that happen to run a browser.
+  const known = new Set(sensors.map(leaf => leaf.address).filter(Boolean));
+  if (data.address) known.add(data.address);
+  const others = (data.devices || [])
+    .filter(device => !known.has(device.ip))
+    .map(device => ({
+      kind: 'device',
+      name: device.hostname || device.label || 'Unidentified device',
+      online: true,
+      measured: false,
+      lines: [device.ip, device.seenBy && device.seenBy.length > 1 ? `seen by ${device.seenBy.length}` : (device.label || '')].filter(Boolean)
+    }));
+
   const powerline = browsers.filter(leaf => leaf.lines[1] === 'Powerline');
   const offline = allBrowsers.filter(node => !node.online).length;
-  return { sensors, browsers, powerline, offline };
+  return { sensors, browsers, others, powerline, offline };
 }
 
 function measureInStage(element) {
@@ -240,19 +255,19 @@ function drawMapLines() {
 }
 
 function renderMap(data) {
-  const { sensors, browsers, powerline, offline } = mapLeaves(data);
+  const { sensors, browsers, others, powerline, offline } = mapLeaves(data);
   const stage = $('map-stage');
   const width = stage ? stage.clientWidth : 900;
   // Hard ceiling only; rows are laid out and wired up by drawMapLines.
   const perRow = Math.max(1, Math.floor((width - 30) / 142));
-  const capacity = Math.max(perRow, Math.min(24, perRow * 4));
-  const leaves = [...sensors, ...browsers];
+  const capacity = Math.max(perRow, Math.min(30, perRow * 6));
+  const leaves = [...sensors, ...browsers, ...others];
   const shown = leaves.slice(0, capacity);
   const hidden = leaves.length - shown.length;
 
   $('map-leaves').innerHTML = shown.map(leaf => `
     <div class="map-leaf ${leaf.kind}${leaf.online ? '' : ' offline'}" data-measured="${leaf.measured ? '1' : '0'}">
-      <span class="leaf-icon">${leaf.kind === 'sensor' ? '◈' : '▯'}</span>
+      <span class="leaf-icon">${leaf.kind === 'sensor' ? '◈' : leaf.kind === 'browser' ? '▯' : '·'}</span>
       <span class="leaf-name" title="${escapeHtml(leaf.name)}">${escapeHtml(leaf.name)}</span>
       ${leaf.lines.map(line => `<span class="leaf-sub">${escapeHtml(line)}</span>`).join('')}
     </div>`).join('') + (hidden > 0 ? `<div class="map-leaf more"><span class="leaf-name">+${hidden} more</span><span class="leaf-sub">see the tables below</span></div>` : '');
@@ -260,7 +275,7 @@ function renderMap(data) {
   $('map-extra').textContent = '';
   const base = powerline.length
     ? 'Lines join what was actually measured. A device reports a powerline link, but the adapters themselves are not mapped.'
-    : 'Lines join what was actually measured. Switches, access points and the shared LAN segment between these hosts are not drawn.';
+    : 'Sensors and reporting browsers are measured directly. The small chips are other devices the NAS has seen on the LAN.';
   $('map-caption-text').textContent = offline
     ? `${base} ${offline} saved device${offline === 1 ? '' : 's'} ${offline === 1 ? 'is' : 'are'} not reporting and ${offline === 1 ? 'is' : 'are'} listed below.`
     : base;
