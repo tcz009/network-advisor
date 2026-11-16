@@ -15,6 +15,7 @@ const { discoverDevices } = require('./discovery');
 const { parseLldpCapture, readCapture } = require('./lldp');
 const { snapshot, computeChanges, appendEvents } = require('./changes');
 const { fetchPihole, lastValue: lastPihole, isStale: piholeStale } = require('./pihole');
+const { parsePlctool } = require('./powerline');
 
 const exec = promisify(execFile);
 
@@ -43,6 +44,7 @@ const DISCOVERY = String(process.env.DISCOVERY || 'true').toLowerCase() !== 'fal
 // Set by the sidecar; absence just means no capture has run yet.
 // A separate volume the capture sidecar owns; the hub mounts it read-only.
 const LLDP_PCAP = process.env.LLDP_PCAP || '/lldp/lldp.pcap';
+const POWERLINE_FILE = process.env.POWERLINE_FILE || '/lldp/powerline.txt';
 const LLDP_ENABLED = String(process.env.LLDP || 'true').toLowerCase() !== 'false';
 // Optional webhook (ntfy, Telegram, anything that takes JSON) for device changes.
 const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK || '';
@@ -111,6 +113,7 @@ let lastScanStartedAt = 0;
 let kasaByIp = new Map();
 let discoveryByIp = new Map();
 let lldpCache = { mtime: 0, value: null };
+let powerlineCache = { mtime: 0, value: null };
 let changeEvents = [];
 let deviceSnapshot = new Map();
 let sweepResponders = new Map();
@@ -768,6 +771,31 @@ function lldpNeighbours() {
   return value;
 }
 
+// Powerline adapters have no IP; this comes from the sidecar's plctool run.
+function powerlineState(devices = []) {
+  const capture = readCapture(POWERLINE_FILE);
+  if (!capture.ok) return { ok: false, adapters: [], error: capture.error };
+  let parsed;
+  if (powerlineCache.mtime === capture.mtime && powerlineCache.value) {
+    parsed = powerlineCache.value;
+  } else {
+    parsed = parsePlctool(capture.buffer.toString('utf8'));
+    powerlineCache = { mtime: capture.mtime, value: parsed };
+  }
+  const byMac = new Map(devices.map(device => [String(device.mac || '').toUpperCase(), device]));
+  const adapters = parsed.adapters.map(adapter => {
+    const behind = adapter.bda ? byMac.get(adapter.bda) : null;
+    return {
+      ...adapter,
+      // Name the Ethernet device bridged by this adapter, when we know it.
+      behindLabel: behind ? (behind.hostname || behind.label || behind.ip) : null,
+      behindIp: behind ? behind.ip : null,
+      capturedAt: new Date(capture.mtime).toISOString()
+    };
+  });
+  return { ...parsed, adapters };
+}
+
 function hubHost() {
   if (!ADVISOR_HUB) return null;
   try {
@@ -1214,6 +1242,7 @@ async function handle(req, res) {
         enabled: Boolean(parseCidr(SCAN_SUBNET))
       },
       lldp: lldpNeighbours(),
+      powerline: powerlineState(mergedDevices()),
       changes: changeEvents.slice(-20).reverse(),
       pihole: lastPihole(),
       nodes: activeNodes,
@@ -1279,6 +1308,7 @@ async function handle(req, res) {
       rooms,
       history: history.slice(-60),
       lldp: lldpNeighbours(),
+      powerline: powerlineState(mergedDevices()),
       changes: changeEvents.slice(-100),
       config: {
         scanSubnet: SCAN_SUBNET || null,
@@ -1536,6 +1566,7 @@ module.exports = {
   mergeDevices,
   annotateDevices,
   mergedDevices,
+  powerlineState,
   recordChanges,
   computeChanges,
   lldpNeighbours,

@@ -88,11 +88,23 @@ services:
       - sh
       - -c
       - |
-        while true; do
-          tcpdump -i "$$IFACE" -w /lldp/lldp.pcap.tmp -s 1500 -G 45 -W 1 'ether proto 0x88cc' >/dev/null 2>&1 || true
-          mv /lldp/lldp.pcap.tmp /lldp/lldp.pcap 2>/dev/null || true
-          sleep 5
-        done
+        # LLDP capture (45 s windows) and powerline membership (once a minute)
+        # run side by side; either failing must not kill the other.
+        (
+          while true; do
+            tcpdump -i "$$IFACE" -w /lldp/lldp.pcap.tmp -s 1500 -G 45 -W 1 'ether proto 0x88cc' >/dev/null 2>&1 || true
+            mv /lldp/lldp.pcap.tmp /lldp/lldp.pcap 2>/dev/null || true
+            sleep 5
+          done
+        ) &
+        (
+          while true; do
+            plctool -i "$$IFACE" -m > /lldp/powerline.txt.tmp 2>/dev/null || true
+            mv /lldp/powerline.txt.tmp /lldp/powerline.txt 2>/dev/null || true
+            sleep 60
+          done
+        ) &
+        wait
 
 volumes:
   network-advisor-data:

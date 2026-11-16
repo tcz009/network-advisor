@@ -413,6 +413,21 @@ function renderRooms(devices) {
   $('rooms-summary').innerHTML = pills.join('');
 }
 
+function renderPowerline(powerline) {
+  const el = $('powerline-line');
+  if (!el) return;
+  if (!powerline || powerline.ok !== true || !powerline.adapters || !powerline.adapters.length) {
+    el.textContent = '';
+    return;
+  }
+  const peers = powerline.adapters.filter(adapter => !adapter.local);
+  const rate = powerline.bestTxMbps
+    ? `${powerline.bestTxMbps}/${powerline.bestRxMbps ?? '?'} Mb/s`
+    : 'rate unknown';
+  const described = peers.map(adapter => adapter.behindLabel || adapter.bda || adapter.mac).join(', ');
+  el.innerHTML = `<span class="upstream-dot"></span>Powerline: ${powerline.adapters.length} adapters · link ${escapeHtml(rate)}${described ? ` · bridging ${escapeHtml(described)}` : ''}`;
+}
+
 function renderChanges(events) {
   const list = events || [];
   $('changes-count').textContent = String(list.length);
@@ -574,6 +589,7 @@ function render(data) {
   renderUpstream(data.lldp);
   renderChanges(data.changes);
   renderPihole(data.pihole);
+  renderPowerline(data.powerline);
   renderTrend(data.history, data.scan);
   renderArp(data.devices || data.arp);
   renderFindings(data);
