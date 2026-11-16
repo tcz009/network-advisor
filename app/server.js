@@ -36,7 +36,8 @@ const KASA_PROBE = String(process.env.KASA_PROBE || 'true').toLowerCase() !== 'f
 // that ignore ICMP. DISCOVERY=false leaves the scan to ping and 9999 only.
 const DISCOVERY = String(process.env.DISCOVERY || 'true').toLowerCase() !== 'false';
 // Set by the sidecar; absence just means no capture has run yet.
-const LLDP_PCAP = path.join(DATA_DIR, 'lldp.pcap');
+// A separate volume the capture sidecar owns; the hub mounts it read-only.
+const LLDP_PCAP = process.env.LLDP_PCAP || '/lldp/lldp.pcap';
 const LLDP_ENABLED = String(process.env.LLDP || 'true').toLowerCase() !== 'false';
 
 // Host header validation exists to defeat DNS rebinding: an attacker page whose

@@ -37,6 +37,7 @@ services:
       - /tmp:rw,noexec,nosuid,size=16m
     volumes:
       - network-advisor-data:/data
+      - network-advisor-lldp:/lldp:ro
     restart: unless-stopped
     pids_limit: 256
     logging:
@@ -66,9 +67,13 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=8m
     volumes:
-      - network-advisor-data:/data
+      # Its own volume, so the capture never needs write access to the hub's data.
+      - network-advisor-lldp:/lldp
     restart: unless-stopped
     pids_limit: 64
+    healthcheck:
+      # The image healthcheck probes the dashboard, which this container is not.
+      disable: true
     logging:
       driver: json-file
       options:
@@ -79,8 +84,8 @@ services:
       - -c
       - |
         while true; do
-          tcpdump -i "$$IFACE" -w /data/lldp.pcap.tmp -s 1500 -G 45 -W 1 'ether proto 0x88cc' >/dev/null 2>&1 || true
-          mv /data/lldp.pcap.tmp /data/lldp.pcap 2>/dev/null || true
+          tcpdump -i "$$IFACE" -w /lldp/lldp.pcap.tmp -s 1500 -G 45 -W 1 'ether proto 0x88cc' >/dev/null 2>&1 || true
+          mv /lldp/lldp.pcap.tmp /lldp/lldp.pcap 2>/dev/null || true
           sleep 5
         done
 
@@ -89,3 +94,5 @@ volumes:
     # Explicit name: the volume must not depend on which Compose project the
     # stack happened to be started with, or a `-p` change silently starts empty.
     name: network-advisor-data
+  network-advisor-lldp:
+    name: network-advisor-lldp
