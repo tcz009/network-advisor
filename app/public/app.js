@@ -123,14 +123,23 @@ function renderNodes(nodes) {
 }
 function mapLeaves(data) {
   const sensors = (data.agents || []).map(agent => {
+    const tunnelOnly = !agent.gateway && Boolean(agent.vpn);
     const hop = agent.gateway || agent.vpn?.address || null;
     const hopIface = agent.iface || agent.vpn?.iface || null;
-    const toHub = agent.hub && agent.hub.avgMs != null ? fmtMs(agent.hub.avgMs) : 'not measured';
+    const toHub = agent.hub && agent.hub.avgMs != null ? fmtMs(agent.hub.avgMs) : null;
+    const lines = [
+      hop ? `${hop}${hopIface ? ` ${hopIface}` : ''}${tunnelOnly ? ' · VPN' : ''}` : 'no default route'
+    ];
+    // A host can have both a LAN default route and a VPN one; say so instead of
+    // tagging the LAN hop as if the traffic went through the tunnel.
+    if (agent.gateway && agent.vpn) lines.push(`VPN ${agent.vpn.address} ${agent.vpn.iface || ''}`.trim());
+    lines.push(`to hub ${toHub || 'not measured'}`);
     return {
       kind: 'sensor',
       name: agent.label || agent.name,
       online: Boolean(agent.online),
-      lines: [hop ? `${hop}${hopIface ? ` ${hopIface}` : ''}${agent.vpn ? ' · VPN' : ''}` : 'no default route', `to hub ${toHub}`]
+      measured: Boolean(agent.online) && (agent.hub?.avgMs != null || agent.router?.avgMs != null),
+      lines
     };
   }).sort((a, b) => Number(b.online) - Number(a.online));
 
@@ -141,11 +150,11 @@ function mapLeaves(data) {
       kind: 'browser',
       name: node.name || 'Device',
       online: Boolean(node.online),
+      measured: Boolean(node.online) && node.browserRttMs != null,
       lines: [`to NAS ${fmtMs(node.browserRttMs)}`, node.connection && node.connection !== 'Unknown' ? node.connection : (node.deviceType || 'device')]
     }));
 
   const powerline = browsers.filter(leaf => leaf.lines[1] === 'Powerline');
-
   return { sensors, browsers, powerline };
 }
 
@@ -212,13 +221,13 @@ function renderMap(data) {
   const hidden = leaves.length - shown.length;
 
   $('map-leaves').innerHTML = shown.map(leaf => `
-    <div class="map-leaf ${leaf.kind}${leaf.online ? '' : ' offline'}" data-measured="${leaf.lines[0].includes('not measured') || leaf.lines[0].includes('no default route') ? '0' : '1'}">
+    <div class="map-leaf ${leaf.kind}${leaf.online ? '' : ' offline'}" data-measured="${leaf.measured ? '1' : '0'}">
       <span class="leaf-icon">${leaf.kind === 'sensor' ? '◈' : '▯'}</span>
       <span class="leaf-name" title="${escapeHtml(leaf.name)}">${escapeHtml(leaf.name)}</span>
       ${leaf.lines.map(line => `<span class="leaf-sub">${escapeHtml(line)}</span>`).join('')}
     </div>`).join('') + (hidden > 0 ? `<div class="map-leaf more"><span class="leaf-name">+${hidden} more</span><span class="leaf-sub">see the tables below</span></div>` : '');
 
-  $('map-extra').textContent = hidden > 0 ? ` · ${hidden} more reported` : '';
+  $('map-extra').textContent = '';
   $('map-caption-text').textContent = powerline.length
     ? 'Lines join what was actually measured. At least one device reports a powerline link, but the adapters themselves are not mapped.'
     : 'Lines join what was actually measured. Switches, access points and the shared LAN segment between these hosts are not drawn.';
@@ -247,8 +256,12 @@ function renderAgents(agents) {
     const load = agent.load ? `${agent.load.load1} / ${agent.load.cores}` : '—';
     const hopAddress = agent.gateway || agent.vpn?.address || null;
     const hopIface = agent.iface || agent.vpn?.iface || null;
+    const tunnelOnly = !agent.gateway && Boolean(agent.vpn);
+    const vpnNote = agent.gateway && agent.vpn
+      ? `<small class="table-secondary">VPN also up: ${escapeHtml(agent.vpn.address)}</small>`
+      : '';
     const hop = hopAddress
-      ? `${escapeHtml(hopAddress)}${agent.vpn ? ' <em>VPN</em>' : ''}<small class="table-secondary">${escapeHtml(hopIface || '')}</small>`
+      ? `${escapeHtml(hopAddress)}${tunnelOnly ? ' <em>VPN</em>' : ''}<small class="table-secondary">${escapeHtml(hopIface || '')}</small>${vpnNote}`
       : 'no default route';
     const toHub = agent.hub && agent.hub.avgMs != null ? fmtMs(agent.hub.avgMs) : '—';
     return `<tr><td><div class="device-cell"><span class="device-dot">◈</span><div><strong>${escapeHtml(agent.label || agent.name)}</strong><small>${escapeHtml(agent.platform || 'sensor')}</small></div></div></td><td>${hop}</td><td>${toHub}</td><td>${Number(agent.deviceCount || 0)}</td><td>${load}${agent.load?.busy ? '<small class="table-secondary">busy</small>' : ''}</td><td>${timeAgo(agent.lastSeen)}</td><td><span class="${agent.online ? 'online-badge' : 'offline-badge'}">${agent.online ? 'ONLINE' : 'OFFLINE'}</span></td></tr>`;
