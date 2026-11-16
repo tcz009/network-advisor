@@ -247,6 +247,26 @@ test('resolvePublicFile blocks traversal in every direction', () => {
   assert.equal(advisor.resolvePublicFile(decoded.value), null);
 });
 
+test('pruneNodes drops expired devices and keeps the rest', () => {
+  const now = Date.now();
+  const day = 24 * 60 * 60_000;
+  const map = {
+    fresh: { id: 'fresh', lastSeen: now - 60_000 },
+    stale: { id: 'stale', lastSeen: now - 8 * day },
+    never: { id: 'never' }
+  };
+  const result = advisor.pruneNodes(map, { now });
+  assert.deepEqual(Object.keys(result), ['fresh']);
+});
+
+test('pruneNodes caps the list at the most recent devices', () => {
+  const now = Date.now();
+  const map = {};
+  for (let i = 0; i < 5; i++) map[`d${i}`] = { id: `d${i}`, lastSeen: now - i * 1000 };
+  advisor.pruneNodes(map, { now, max: 2 });
+  assert.deepEqual(Object.keys(map).sort(), ['d0', 'd1']);
+});
+
 test('cleanText strips markup and control characters', () => {
   assert.equal(advisor.cleanText('<script>alert(1)</script>'), 'scriptalert(1)/script');
   assert.equal(advisor.cleanText('a\u0000b\u001fc'), 'abc');

@@ -119,7 +119,11 @@ function renderNodes(nodes) {
   setMetric('online-count', online, 'devices');
   $('device-foot').textContent = online ? `${online} reporting from this dashboard` : 'Open the page on another device to add a node';
   $('nodes-total').textContent = String(sorted.length);
-  $('nodes-table').innerHTML = sorted.length ? sorted.map(node => `<tr><td><div class="device-cell"><span class="device-dot">${node.deviceType?.includes('Mac') || node.deviceType?.includes('PC') ? '▱' : '▯'}</span><div><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.deviceType || 'Device')}</small></div></div></td><td>${escapeHtml(node.connection || 'Unknown')}<small class="table-secondary">Set on device</small></td><td>${fmtMs(node.browserRttMs)}<small class="table-secondary">Device-to-NAS response</small><small class="table-secondary">↓ ${fmtMbps(node.downMbps)} &nbsp; ↑ ${fmtMbps(node.upMbps)}${node.speedCheckedAt ? ` · checked ${timeAgo(new Date(node.speedCheckedAt).getTime())}` : ' · not measured'}</small></td><td>${timeAgo(node.lastSeen)}</td><td><span class="${node.online ? 'online-badge' : 'offline-badge'}">${node.online ? 'ONLINE' : 'OFFLINE'}</span></td></tr>`).join('') : '<tr><td class="empty-row" colspan="5">Open this page on your phone or MacBook to add it to the map.</td></tr>';
+  const offlineCount = sorted.filter(node => !node.online).length;
+  const clearButton = $('clear-offline');
+  clearButton.hidden = offlineCount === 0;
+  clearButton.textContent = `Clear offline (${offlineCount})`;
+  $('nodes-table').innerHTML = sorted.length ? sorted.map(node => `<tr><td><div class="device-cell"><span class="device-dot">${node.deviceType?.includes('Mac') || node.deviceType?.includes('PC') ? '▱' : '▯'}</span><div><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.deviceType || 'Device')}</small></div></div></td><td>${escapeHtml(node.connection || 'Unknown')}<small class="table-secondary">Set on device</small></td><td>${fmtMs(node.browserRttMs)}<small class="table-secondary">Device-to-NAS response</small><small class="table-secondary">↓ ${fmtMbps(node.downMbps)} &nbsp; ↑ ${fmtMbps(node.upMbps)}${node.speedCheckedAt ? ` · checked ${timeAgo(new Date(node.speedCheckedAt).getTime())}` : ' · not measured'}</small></td><td>${timeAgo(node.lastSeen)}</td><td><span class="${node.online ? 'online-badge' : 'offline-badge'}">${node.online ? 'ONLINE' : 'OFFLINE'}</span></td><td class="row-actions"><button class="row-delete" data-node-id="${escapeHtml(node.id)}" title="Forget this device" aria-label="Forget ${escapeHtml(node.name)}">×</button></td></tr>`).join('') : '<tr><td class="empty-row" colspan="6">Open this page on your phone or MacBook to add it to the map.</td></tr>';
 }
 function mapLeaves(data) {
   const sensors = (data.agents || []).map(agent => {
@@ -143,9 +147,10 @@ function mapLeaves(data) {
     };
   }).sort((a, b) => Number(b.online) - Number(a.online));
 
-  const browsers = (data.nodes || [])
-    .slice()
-    .sort((a, b) => Number(b.online) - Number(a.online) || b.lastSeen - a.lastSeen)
+  const allBrowsers = data.nodes || [];
+  const browsers = allBrowsers
+    .filter(node => node.online)
+    .sort((a, b) => b.lastSeen - a.lastSeen)
     .map(node => ({
       kind: 'browser',
       name: node.name || 'Device',
@@ -155,7 +160,8 @@ function mapLeaves(data) {
     }));
 
   const powerline = browsers.filter(leaf => leaf.lines[1] === 'Powerline');
-  return { sensors, browsers, powerline };
+  const offline = allBrowsers.filter(node => !node.online).length;
+  return { sensors, browsers, powerline, offline };
 }
 
 function measureInStage(element) {
@@ -184,38 +190,62 @@ function drawMapLines() {
   svg.setAttribute('height', String(height));
 
   const parts = [];
-  const link = (from, to, { curved = false, dim = false } = {}) => {
-    const d = curved
-      ? `M${from.cx} ${from.bottom} C${from.cx} ${from.bottom + (to.top - from.bottom) * 0.55} ${to.cx} ${to.top - (to.top - from.bottom) * 0.55} ${to.cx} ${to.top}`
-      : `M${from.cx} ${from.bottom} L${to.cx} ${to.top}`;
-    parts.push(`<path class="fan-line${dim ? ' fan-line-dim' : ''}" d="${d}"/>`);
-  };
+  const line = (x1, y1, x2, y2, dim) =>
+    parts.push(`<path class="fan-line${dim ? ' fan-line-dim' : ''}" d="M${x1} ${y1} L${x2} ${y2}"/>`);
 
   const internet = document.querySelector('.label-internet');
   const router = document.querySelector('.label-router');
-  const nas = document.querySelector('.label-nas');
-  if (internet && router && nas) {
-    const i = measureInStage(internet);
-    const r = measureInStage(router);
-    const n = measureInStage(nas);
-    link(i, r);
-    link(r, n);
+  const nasLabel = document.querySelector('.label-nas');
+  if (!internet || !router || !nasLabel) {
+    svg.innerHTML = '';
+    return;
+  }
+  const i = measureInStage(internet);
+  const r = measureInStage(router);
+  const n = measureInStage(nasLabel);
+  line(i.cx, i.bottom, r.cx, r.top, false);
+  line(r.cx, r.bottom, n.cx, n.top, false);
 
-    // Fan out to every host the NAS and its sensors actually reported.
-    for (const leaf of document.querySelectorAll('#map-leaves .map-leaf[data-measured]')) {
-      const box = measureInStage(leaf);
-      link(n, box, { curved: true, dim: leaf.dataset.measured === '0' });
+  // Group leaves into visual rows, then run a bus above each row and a trunk
+  // down the centre. This keeps every host connected however many rows it takes.
+  const leaves = [...document.querySelectorAll('#map-leaves .map-leaf[data-measured]')]
+    .map(el => ({ el, box: measureInStage(el), measured: el.dataset.measured === '1' }));
+  const rows = [];
+  for (const leaf of leaves) {
+    const row = rows.find(candidate => Math.abs(candidate.top - leaf.box.top) <= 6);
+    if (row) {
+      row.items.push(leaf);
+      row.top = Math.min(row.top, leaf.box.top);
+    } else {
+      rows.push({ top: leaf.box.top, items: [leaf] });
     }
   }
+  rows.sort((a, b) => a.top - b.top);
+
+  const BUS_GAP = 16;
+  let trunkFrom = n.bottom;
+  rows.forEach(row => {
+    const busY = row.top - BUS_GAP;
+    const xs = row.items.map(leaf => leaf.box.cx);
+    const left = Math.min(...xs, n.cx);
+    const right = Math.max(...xs, n.cx);
+    if (right - left > 1) line(left, busY, right, busY, false);
+    if (busY > trunkFrom) line(n.cx, trunkFrom, n.cx, busY, false);
+    for (const leaf of row.items) {
+      line(leaf.box.cx, busY, leaf.box.cx, leaf.box.top, !leaf.measured);
+    }
+    trunkFrom = busY;
+  });
   svg.innerHTML = parts.join('');
 }
 
 function renderMap(data) {
-  const { sensors, browsers, powerline } = mapLeaves(data);
+  const { sensors, browsers, powerline, offline } = mapLeaves(data);
   const stage = $('map-stage');
   const width = stage ? stage.clientWidth : 900;
-  // One row only: a second row would put connectors across the cards above it.
-  const capacity = Math.max(2, Math.min(8, Math.floor((width - 30) / 142)));
+  // Hard ceiling only; rows are laid out and wired up by drawMapLines.
+  const perRow = Math.max(1, Math.floor((width - 30) / 142));
+  const capacity = Math.max(perRow, Math.min(24, perRow * 4));
   const leaves = [...sensors, ...browsers];
   const shown = leaves.slice(0, capacity);
   const hidden = leaves.length - shown.length;
@@ -228,9 +258,12 @@ function renderMap(data) {
     </div>`).join('') + (hidden > 0 ? `<div class="map-leaf more"><span class="leaf-name">+${hidden} more</span><span class="leaf-sub">see the tables below</span></div>` : '');
 
   $('map-extra').textContent = '';
-  $('map-caption-text').textContent = powerline.length
-    ? 'Lines join what was actually measured. At least one device reports a powerline link, but the adapters themselves are not mapped.'
+  const base = powerline.length
+    ? 'Lines join what was actually measured. A device reports a powerline link, but the adapters themselves are not mapped.'
     : 'Lines join what was actually measured. Switches, access points and the shared LAN segment between these hosts are not drawn.';
+  $('map-caption-text').textContent = offline
+    ? `${base} ${offline} saved device${offline === 1 ? '' : 's'} ${offline === 1 ? 'is' : 'are'} not reporting and ${offline === 1 ? 'is' : 'are'} listed below.`
+    : base;
 
   requestAnimationFrame(drawMapLines);
 }
@@ -387,6 +420,37 @@ $('nav-devices').addEventListener('click', () => {
   $('nav-devices').setAttribute('aria-current', 'page');
   document.querySelector('.devices-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
+async function forgetNode(id) {
+  try {
+    const response = await fetch(`/api/nodes/${encodeURIComponent(id)}`, {
+      method: 'DELETE', headers: { 'x-advisor-intent': 'delete' }, cache: 'no-store'
+    });
+    return response.ok;
+  } catch { return false; }
+}
+
+$('nodes-table').addEventListener('click', async event => {
+  const button = event.target.closest('.row-delete');
+  if (!button) return;
+  const id = button.dataset.nodeId;
+  if (id === state.id && !confirm('This browser is the device you are using. Forget it anyway?')) return;
+  button.disabled = true;
+  if (await forgetNode(id)) { toast('Device forgotten'); await refresh(); }
+  else { toast('Could not forget that device'); button.disabled = false; }
+});
+
+$('clear-offline').addEventListener('click', async () => {
+  const offline = (latest?.nodes || []).filter(node => !node.online);
+  if (!offline.length) return;
+  if (!confirm(`Forget ${offline.length} device${offline.length === 1 ? '' : 's'} that are not reporting? They will come back if you open the dashboard on them again.`)) return;
+  let removed = 0;
+  for (const node of offline) {
+    if (await forgetNode(node.id)) removed++;
+  }
+  toast(`Forgot ${removed} device${removed === 1 ? '' : 's'}`);
+  await refresh();
+});
+
 $('save-device').addEventListener('click', saveIdentity);
 $('device-name').addEventListener('keydown', event => { if (event.key === 'Enter') saveIdentity(); });
 $('run-check').addEventListener('click', runChecks);

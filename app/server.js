@@ -38,6 +38,9 @@ const AGENT_ONLINE_MS = 90_000;
 const AGENT_DEVICE_TTL_MS = 10 * 60_000;
 
 const HISTORY_LIMIT = 288;
+// Browser nodes are re-created automatically when a device comes back, so old
+// ones are safe to drop. Without this the device list grows without bound.
+const NODE_TTL_MS = 7 * 24 * 60 * 60_000;
 const MAX_NODES = 200;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
@@ -409,19 +412,30 @@ function loadState() {
   try {
     Object.assign(agents, JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8')));
   } catch { agents = Object.create(null); }
+  trimNodes();
   try {
     const saved = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
     if (Array.isArray(saved)) history = saved.slice(-HISTORY_LIMIT);
   } catch { history = []; }
 }
 
+function pruneNodes(map, { now = Date.now(), ttlMs = NODE_TTL_MS, max = MAX_NODES } = {}) {
+  const cutoff = now - ttlMs;
+  for (const node of Object.values(map)) {
+    if (!node.lastSeen || node.lastSeen < cutoff) delete map[node.id];
+  }
+  const entries = Object.values(map);
+  if (entries.length > max) {
+    entries
+      .sort((a, b) => (a.lastSeen || 0) - (b.lastSeen || 0))
+      .slice(0, entries.length - max)
+      .forEach(node => { delete map[node.id]; });
+  }
+  return map;
+}
+
 function trimNodes() {
-  const entries = Object.values(nodes);
-  if (entries.length <= MAX_NODES) return;
-  entries
-    .sort((a, b) => (a.lastSeen || 0) - (b.lastSeen || 0))
-    .slice(0, entries.length - MAX_NODES)
-    .forEach(node => { delete nodes[node.id]; });
+  pruneNodes(nodes);
 }
 
 /* ------------------------------------------------------------------- checks */
@@ -925,6 +939,7 @@ module.exports = {
   isTunnelInterface,
   parseArpTable,
   neighbourDevices,
+  pruneNodes,
   isContainerInterface,
   cleanText,
   decodePathname,
