@@ -70,7 +70,9 @@ or put `SCAN_SUBNET=192.168.1.0/24` in a `.env` file beside `compose.yaml`. When
 
 Only your own range is accepted: anything wider than `/22` is refused so a typo cannot turn into a large ICMP blast. Sweeping an address range you do not own is not a good idea, and some devices treat it as hostile.
 
-## Upstream equipment (LLDP)
+## Upstream equipment (LLDP) and powerline
+
+Both are documented in depth in [docs/powerline.md](docs/powerline.md) and, for LLDP, under *Upstream equipment* below.
 
 Managed switches and routers advertise themselves with LLDP. Capturing that needs a raw socket, which the dashboard deliberately does not have, so a small **sidecar** does it instead:
 
