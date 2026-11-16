@@ -138,6 +138,13 @@ function renderNodes(nodes) {
   clearButton.textContent = `Clear offline (${offlineCount})`;
   const focusedId = document.activeElement?.dataset?.nodeId || null;
   $('nodes-table').innerHTML = sorted.length ? sorted.map(node => `<tr><td><div class="device-cell"><span class="device-dot">${node.deviceType?.includes('Mac') || node.deviceType?.includes('PC') ? '▱' : '▯'}</span><div><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.deviceType || 'Device')}</small></div></div></td><td>${escapeHtml(node.connection || 'Unknown')}<small class="table-secondary">Set on device</small></td><td>${fmtMs(node.browserRttMs)}<small class="table-secondary">Device-to-NAS response</small><small class="table-secondary">↓ ${fmtMbps(node.downMbps)} &nbsp; ↑ ${fmtMbps(node.upMbps)}${node.speedCheckedAt ? ` · checked ${timeAgo(new Date(node.speedCheckedAt).getTime())}` : ' · not measured'}</small></td><td>${timeAgo(node.lastSeen)}</td><td><span class="${node.online ? 'online-badge' : 'offline-badge'}">${node.online ? 'ONLINE' : 'OFFLINE'}</span></td><td class="row-actions"><button class="row-delete" data-node-id="${escapeHtml(node.id)}" title="Forget this device" aria-label="Forget ${escapeHtml(node.name)}">×</button></td></tr>`).join('') : '<tr><td class="empty-row" colspan="6">Open this page on your phone or MacBook to add it to the map.</td></tr>';
+  // The poll rebuilds this table every 7 s; without this a keyboard user loses
+  // their place in it each time.
+  if (focusedId) {
+    [...document.querySelectorAll('.row-delete')]
+      .find(button => button.dataset.nodeId === focusedId)
+      ?.focus();
+  }
 }
 function mapLeaves(data) {
   const sensors = (data.agents || []).map(agent => {
