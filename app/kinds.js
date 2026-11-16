@@ -11,7 +11,7 @@ const RULES = [
   { kind: 'plug', pattern: /\bhs1\d\d\b|\bkp1\d\d\b|kasa|tapo|shelly|smart ?plug|wemo/i },
   { kind: 'bulb', pattern: /lifx|hue|tradfri|bulb|lamp/i },
   { kind: 'speaker', pattern: /sonos|homepod|echo|alexa/i },
-  { kind: 'TV', pattern: /toshiba|bravia|hisense|tcl|philips.*tv|lg.*(oled|webos)|samsung.*tv|skyworth|sharp/i },
+  { kind: 'TV', pattern: /toshiba|bravia|hisense|tcl|philips.*tv|lg.*(oled|webos)|samsung.*tv|skyworth|sharp|vestel|jvc|telefunken/i },
   { kind: 'media player', pattern: /shield|roku|fire ?tv|chromecast|apple ?tv|kodi/i },
   { kind: 'IR blaster', pattern: /rmmini|rm ?mini|broadlink/i },
   { kind: 'watch', pattern: /watch/i },
@@ -35,7 +35,14 @@ const SERVICE_KINDS = [
   { kind: 'hub', pattern: /hue|homekit|hap/i }
 ];
 
-function classifyDevice({ hostname = '', label = '', model = '', services = [], upnpServer = '' } = {}) {
+function classifyDevice({
+  hostname = '',
+  label = '',
+  model = '',
+  services = [],
+  upnpServer = '',
+  upnpServices = []
+} = {}) {
   const fromModel = String(model || '');
   // Kasa numbering: HS1xx and KP1xx are plugs, HS2xx are wall switches.
   if (/\bHS2\d{2}\b/i.test(fromModel)) return { kind: 'switch', evidence: `model ${fromModel}` };
@@ -55,6 +62,13 @@ function classifyDevice({ hostname = '', label = '', model = '', services = [], 
   if (/sonos/i.test(server)) return { kind: 'speaker', evidence: 'ssdp Sonos' };
   if (/printer|cups|ipp/i.test(server)) return { kind: 'printer', evidence: 'ssdp printer' };
   if (/toshiba|bravia|webos|tizen|hisense|tcl/i.test(server)) return { kind: 'TV', evidence: 'ssdp TV' };
+
+  // A UPnP MediaRenderer with AVTransport is a thing that plays audio/video.
+  // That is honest for a TV, a soundbar or a games console; the device type is
+  // refined by hostname or vendor where either is known.
+  const renderer = [...(upnpServices || []), ...(services || [])]
+    .some(service => /mediarenderer|avtransport/i.test(String(service)));
+  if (renderer) return { kind: 'media player', evidence: 'upnp MediaRenderer' };
 
   const announced = (services || []).map(service => String(service).toLowerCase());
   for (const rule of SERVICE_KINDS) {

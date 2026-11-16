@@ -50,6 +50,7 @@ const VENDORS = {
   '00:17:88': 'Philips Hue',
   'D0:73:D5': 'LIFX',
   '74:58:F3': 'Blink',     // confirmed by a Blink-Mini camera on the LAN
+  '64:D8:1B': 'Vestel',    // builds Toshiba/JVC/Telefunken TVs for Europe
   '3C:61:05': 'Shelly',
   'C8:2B:96': 'Shelly',
   'E8:DB:84': 'Shelly',

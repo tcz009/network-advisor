@@ -965,7 +965,8 @@ function annotateDevices(devices, {
       label: device.label,
       model: kasa && kasa.model,
       services: (broadcast && broadcast.mdns && broadcast.mdns.services) || [],
-      upnpServer: (broadcast && broadcast.upnp && broadcast.upnp.server) || ''
+      upnpServer: (broadcast && broadcast.upnp && broadcast.upnp.server) || '',
+      upnpServices: (broadcast && broadcast.upnp && broadcast.upnp.serviceTypes) || []
     });
     const annotated = {
       ...device,
