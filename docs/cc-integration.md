@@ -4,8 +4,8 @@
 Network Advisor (NA) lives in this repository and is maintained separately; the CC
 owner implements any integration on their side.
 
-Written against NA `0.1.0`, branch `improve/robustness-map-and-agents` (PR #1, not yet
-merged). Merge that first so CC depends on `main` rather than a branch.
+Written against NA `0.2.0`, merged to `main` as `93f602f` (PR #1). Point CC at `main`
+rather than a branch.
 
 ---
 
@@ -52,7 +52,7 @@ omitted, but nested values may be `null`.
 ```jsonc
 {
   "app": "Network Advisor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "host": "thinkomv",
   "addresses": ["192.168.1.179"],          // hub's own IPv4 addresses
   "gateway": "192.168.1.1",                // LAN default route, null if none
@@ -80,7 +80,7 @@ omitted, but nested values may be `null`.
     {
       "name": "MediaPi",
       "label": "MediaPi",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "platform": "Linux arm64",
       "addresses": ["192.168.1.110", "172.17.0.1"],
       "gateway": "192.168.1.2",
