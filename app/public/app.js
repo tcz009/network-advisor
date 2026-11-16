@@ -312,8 +312,8 @@ function renderMap(data) {
 
   $('map-extra').textContent = '';
   const base = powerline.length
-    ? 'Lines join what was actually measured. A device reports a powerline link, but the adapters themselves are not mapped.'
-    : 'Cards are measured directly. The chips are other devices the NAS has seen; nothing was measured to them.';
+    ? 'The horizontal lines stand in for the shared LAN segment. A device reports a powerline link, but the adapters themselves are not mapped.'
+    : 'The horizontal lines stand in for the shared LAN segment. Cards were measured directly; chips were only seen, never measured.';
   $('map-caption-text').textContent = offline
     ? `${base} ${offline} saved device${offline === 1 ? '' : 's'} ${offline === 1 ? 'is' : 'are'} not reporting and ${offline === 1 ? 'is' : 'are'} listed below.`
     : base;
