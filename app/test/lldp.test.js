@@ -19,8 +19,9 @@ function lldpPayload() {
   const sysName = Buffer.from('TestRouter');
   const caps = Buffer.from([0x00, 0x9c, 0x00, 0x1c]);
   const mgmt = Buffer.from([5, 1, 192, 168, 1, 1, 1, 0, 0, 0, 0, 0]);
+  // Length-prefixed name, as firmware actually sends it.
   const vlan = Buffer.concat([
-    Buffer.from([0x00, 0x80, 0xc2, 3, 0x00, 0x04]), Buffer.from('eth0.4')
+    Buffer.from([0x00, 0x80, 0xc2, 3, 0x00, 0x04, 0x06]), Buffer.from('eth0.4')
   ]);
   const phy = Buffer.from([0x00, 0x12, 0x0f, 1, 0x03, 0xec, 0xc1, 0x00, 0x1e]);
 
@@ -65,6 +66,18 @@ test('an LLDP frame is decoded into upstream equipment', () => {
   assert.equal(neighbour.speed, '1 Gb/s');
   assert.deepEqual(neighbour.capabilities, ['bridge', 'WLAN AP', 'router']);
   assert.equal(neighbour.ttlSeconds, 120);
+});
+
+test('a system name of "(none)" is treated as absent', () => {
+  const payload = Buffer.concat([
+    tlv(1, Buffer.concat([Buffer.from([4]), Buffer.from([0x80, 0x69, 0x1a, 0xae, 0xfa, 0xd7])])),
+    tlv(5, Buffer.from('(none)')),
+    tlv(6, Buffer.from('Velop')),
+    tlv(0, Buffer.alloc(0))
+  ]);
+  const [neighbour] = lldp.parseLldpCapture(pcap([ethernetFrame(payload)]));
+  assert.equal(neighbour.systemName, null);
+  assert.equal(neighbour.systemDescription, 'Velop');
 });
 
 test('a capture with no LLDP frames yields nothing', () => {

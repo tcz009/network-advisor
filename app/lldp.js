@@ -116,9 +116,11 @@ function decodeLldp(payload, source) {
     } else if (type === 4) {
       neighbour.portDescription = printable(value);
     } else if (type === 5) {
-      neighbour.systemName = printable(value);
+      const name = printable(value);
+      neighbour.systemName = name && name !== '(none)' ? name : null;
     } else if (type === 6) {
-      neighbour.systemDescription = printable(value);
+      const description = printable(value);
+      neighbour.systemDescription = description && description !== '(none)' ? description : null;
     } else if (type === 7 && length >= 4) {
       const caps = value.readUInt16BE(2);
       neighbour.capabilities = CAPABILITY_FLAGS.filter(([bit]) => caps & bit).map(([, name]) => name);
@@ -130,7 +132,9 @@ function decodeLldp(payload, source) {
       const sub = value[3];
       if (oui === 0x0080c2 && sub === 3 && length >= 6) {
         const vlanId = value.readUInt16BE(4);
-        const name = printable(value.subarray(6));
+        // [6] is the name length, then the name itself.
+        const nameLength = length > 6 ? value[6] : 0;
+        const name = nameLength ? printable(value.subarray(7, 7 + nameLength)) : '';
         neighbour.vlan = name ? `${name} (id ${vlanId})` : `id ${vlanId}`;
       }
       if (oui === 0x00120f && sub === 1 && length >= 9) {

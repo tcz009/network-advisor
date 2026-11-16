@@ -416,7 +416,7 @@ function renderUpstream(lldp) {
   }
   el.innerHTML = neighbours.slice(0, 3).map(neighbour => {
     const bits = [
-      neighbour.systemName || neighbour.systemDescription || neighbour.chassisId,
+      neighbour.systemName || neighbour.systemDescription || neighbour.chassisId || neighbour.source,
       neighbour.portDescription || neighbour.portId ? `port ${neighbour.portDescription || neighbour.portId}` : null,
       neighbour.vlan ? `VLAN ${neighbour.vlan}` : null,
       neighbour.speed,
