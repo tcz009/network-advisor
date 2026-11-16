@@ -75,9 +75,15 @@ function probeKasa(ip, { timeout = 900, port = 9999 } = {}) {
     let portOpen = false;
     const socket = new net.Socket();
 
+    // A socket timeout does not fire while a connect is still pending, so a
+    // dead host used to hang the probe (and therefore the whole sweep) forever.
+    // The hard deadline is what actually bounds this.
+    const deadline = setTimeout(() => finish({ error: portOpen ? 'no reply' : 'connect timeout' }), timeout);
+
     const finish = result => {
       if (settled) return;
       settled = true;
+      clearTimeout(deadline);
       socket.destroy();
       resolve({ portOpen, confirmed: false, model: null, alias: null, error: null, ...result });
     };

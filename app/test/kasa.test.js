@@ -58,6 +58,17 @@ test('something listening on 9999 without the protocol is reported, not confirme
   }
 });
 
+test('a host that never answers still resolves within the deadline', async () => {
+  // The regression: a pending connect never fired socket timeout, so one dead
+  // address hung the whole sweep until the HTTP request timed out.
+  const started = Date.now();
+  const result = await kasa.probeKasa('192.0.2.1', { timeout: 300 });   // TEST-NET-1
+  const elapsed = Date.now() - started;
+  assert.equal(result.portOpen, false);
+  assert.equal(result.confirmed, false);
+  assert.ok(elapsed < 2000, `probe took ${elapsed}ms`);
+});
+
 test('a closed port is not reported at all', async () => {
   const result = await kasa.probeKasa('127.0.0.1', { port: 1, timeout: 300 });
   assert.equal(result.portOpen, false);
