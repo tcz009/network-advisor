@@ -72,7 +72,15 @@ const NODE_TTL_MS = 7 * 24 * 60 * 60_000;
 const MAX_NODES = 200;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
-const MIME = { '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const MIME = {
+  '.css': 'text/css',
+  '.js': 'text/javascript',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.webmanifest': 'application/manifest+json'
+};
 const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer' };
 const CONTAINER_IFACE = /^(docker0|docker-|veth|virbr|vmnet|vboxnet|cni|flannel|cali|lxcbr|lxdbr|podman|tun\d|tap\d|wg\d|tailscale|zt)/i;
 const DOCKER_BRIDGE_IFACE = /^br-[0-9a-f]{12}$/i;

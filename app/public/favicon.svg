@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Network Advisor">
+  <rect width="64" height="64" rx="13" fill="#D4A85C"/>
+  <circle cx="32" cy="32" r="26.5" fill="#0B0B0C"/>
+  <g stroke="#F7F4EE" stroke-width="2.6" stroke-linecap="round" fill="none">
+    <path d="M32 32 L32 17.5"/>
+    <path d="M32 32 L21 41"/>
+    <path d="M32 32 L43 41"/>
+  </g>
+  <circle cx="32" cy="32" r="4.2" fill="#F7F4EE"/>
+  <circle cx="32" cy="17.5" r="3.2" fill="#0B0B0C" stroke="#F7F4EE" stroke-width="2.4"/>
+  <circle cx="21" cy="41" r="3.2" fill="#0B0B0C" stroke="#F7F4EE" stroke-width="2.4"/>
+  <circle cx="43" cy="41" r="3.2" fill="#0B0B0C" stroke="#F7F4EE" stroke-width="2.4"/>
+</svg>
