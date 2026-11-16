@@ -68,7 +68,12 @@ function classifyDevice({
   // refined by hostname or vendor where either is known.
   const renderer = [...(upnpServices || []), ...(services || [])]
     .some(service => /mediarenderer|avtransport/i.test(String(service)));
-  if (renderer) return { kind: 'media player', evidence: 'upnp MediaRenderer' };
+  if (renderer) {
+    // A Samsung device that advertises a MediaRenderer is one of their screens;
+    // a Samsung phone does not run that service.
+    if (/samsung/i.test(String(label || ''))) return { kind: 'TV', evidence: 'Samsung renderer' };
+    return { kind: 'media player', evidence: 'upnp MediaRenderer' };
+  }
 
   const announced = (services || []).map(service => String(service).toLowerCase());
   for (const rule of SERVICE_KINDS) {
