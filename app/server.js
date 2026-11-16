@@ -292,17 +292,17 @@ function summariseLoad(loadText, cores) {
 
 /* ------------------------------------------------------------ host readings */
 
-// The address this host holds on an interface, so a map can tell a sensor's own
-// entry in the neighbour table apart from a different device on the same LAN.
-function localAddress(ifaceName) {
-  const candidates = [];
-  for (const [name, entries] of Object.entries(os.networkInterfaces() || {})) {
+// Every address this host holds, so a map can tell a sensor's own entries in the
+// neighbour table apart from a different device on the same LAN. A Pi behind a
+// VPN has several, and its LAN address is the one other hosts will see.
+function localAddresses() {
+  const found = [];
+  for (const entries of Object.values(os.networkInterfaces() || {})) {
     for (const entry of entries || []) {
-      if (entry.family === 'IPv4' && !entry.internal) candidates.push({ iface: name, address: entry.address });
+      if (entry.family === 'IPv4' && !entry.internal && !found.includes(entry.address)) found.push(entry.address);
     }
   }
-  const match = candidates.find(entry => entry.iface === ifaceName);
-  return (match || candidates[0] || {}).address || null;
+  return found;
 }
 
 function readGateway() {
@@ -476,7 +476,7 @@ async function collectReadings() {
   ]);
   const devices = await enrichDevices(neighbourDevices(readArpTable(), gateway?.iface));
   return {
-    address: localAddress(gateway?.iface),
+    addresses: localAddresses(),
     gateway: gateway?.address || null,
     iface: gateway?.iface || null,
     tunnel: Boolean(gateway?.isTunnel),
@@ -615,7 +615,7 @@ function sanitiseReport(body) {
     label: rawName,
     version: cleanText(body.version, 20) || null,
     platform: cleanText(body.platform, 40) || null,
-    address: isIpv4(body.address) ? body.address : null,
+    addresses: Array.isArray(body.addresses) ? body.addresses.filter(isIpv4).slice(0, 8) : [],
     gateway: isIpv4(body.gateway) ? body.gateway : null,
     iface: cleanText(body.iface, 20) || null,
     tunnel: Boolean(body.tunnel),
@@ -696,7 +696,7 @@ async function startAgent() {
         name: AGENT_NAME,
         version: VERSION,
         platform: `${os.type()} ${os.arch()}`,
-        address: readings.address,
+        addresses: readings.addresses,
         gateway: readings.gateway,
         iface: readings.iface,
         tunnel: readings.tunnel,
@@ -756,7 +756,7 @@ async function handle(req, res) {
       app: 'Network Advisor',
       version: VERSION,
       host: os.hostname(),
-      address: localAddress(gateway?.iface),
+      addresses: localAddresses(),
       gateway: gateway?.address || null,
       iface: gateway?.iface || null,
       load: readLoad(),
@@ -966,6 +966,7 @@ module.exports = {
   ipToNumber,
   runCheck,
   runScan,
+  localAddresses,
   loadState,
   sanitiseReport,
   cleanDeviceList,

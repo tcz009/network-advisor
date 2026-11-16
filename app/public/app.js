@@ -140,7 +140,7 @@ function mapLeaves(data) {
     lines.push(`to hub ${toHub || 'not measured'}`);
     return {
       kind: 'sensor',
-      address: agent.address || null,
+      addresses: Array.isArray(agent.addresses) ? agent.addresses : [],
       name: agent.label || agent.name,
       online: Boolean(agent.online),
       measured: Boolean(agent.online) && (agent.hub?.avgMs != null || agent.router?.avgMs != null),
@@ -162,8 +162,9 @@ function mapLeaves(data) {
 
   // Everything else the NAS has seen, so the picture is the network and not
   // just the hosts that happen to run a browser.
-  const known = new Set(sensors.map(leaf => leaf.address).filter(Boolean));
-  if (data.address) known.add(data.address);
+  const known = new Set();
+  for (const leaf of sensors) for (const address of leaf.addresses) known.add(address);
+  for (const address of data.addresses || []) known.add(address);
   const others = (data.devices || [])
     .filter(device => !known.has(device.ip))
     .map(device => ({
