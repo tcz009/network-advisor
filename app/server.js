@@ -10,6 +10,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { describeMac } = require('./oui');
 const { discoverKasa } = require('./kasa');
+const { classifyDevice } = require('./kinds');
 
 const exec = promisify(execFile);
 
@@ -76,7 +77,7 @@ let lastCheck = null;
 let lastScan = null;
 let lastScanStartedAt = 0;
 let kasaByIp = new Map();
-let sweepResponders = new Set();
+let sweepResponders = new Map();
 let lastSweepAt = 0;
 let scanInFlight = null;
 let checkInFlight = null;
@@ -450,13 +451,14 @@ async function enrichDevices(devices) {
 async function pingSweep(hosts, concurrency = 32) {
   let cursor = 0;
   let fatal = null;
-  const responders = new Set();
+  const responders = new Map();   // ip -> round-trip ms
   const worker = async () => {
     while (cursor < hosts.length) {
       const host = hosts[cursor++];
       try {
-        await exec('ping', ['-c', '1', '-W', '1', host], { timeout: 1500 });
-        responders.add(host);
+        const { stdout } = await exec('ping', ['-c', '1', '-W', '1', host], { timeout: 1500 });
+        const parsed = parsePing(stdout);
+        responders.set(host, parsed.avgMs);
       } catch (err) {
         // No reply is the normal case. A missing or unusable binary is not,
         // and used to be reported as "the subnet is empty".
@@ -730,6 +732,8 @@ async function runScan() {
       arp: devices.map(device => ({
         ...device,
         responded: sweep.responders.has(device.ip),
+        sweepMs: sweep.responders.get(device.ip) ?? null,
+        kind: classifyDevice({ hostname: device.hostname, label: device.label })?.kind || null,
         kasa: kasaByIp.get(device.ip) || null
       })),
       tookMs: Date.now() - started,
@@ -871,12 +875,23 @@ function mergeDevices(nasDevices, agentMap, { now = Date.now(), ttlMs = AGENT_DE
 function mergedDevices() {
   const merged = mergeDevices(lastCheck?.arp, agents);
   if (!sweepResponders.size) return merged;
-  return merged.map(device => ({
-    ...device,
-    responded: sweepResponders.has(device.ip),
-    lastSweepAt,
-    kasa: kasaByIp.get(device.ip) || null
-  }));
+  return merged.map(device => {
+    const kasa = kasaByIp.get(device.ip) || null;
+    const classified = classifyDevice({
+      hostname: device.hostname,
+      label: device.label,
+      model: kasa && kasa.model
+    });
+    return {
+      ...device,
+      responded: sweepResponders.has(device.ip),
+      sweepMs: sweepResponders.get(device.ip) ?? null,
+      lastSweepAt,
+      kasa,
+      kind: classified ? classified.kind : null,
+      kindEvidence: classified ? classified.evidence : null
+    };
+  });
 }
 
 async function startAgent() {

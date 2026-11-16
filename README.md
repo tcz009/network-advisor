@@ -70,6 +70,8 @@ or put `SCAN_SUBNET=192.168.1.0/24` in a `.env` file beside `compose.yaml`. When
 
 Only your own range is accepted: anything wider than `/22` is refused so a typo cannot turn into a large ICMP blast. Sweeping an address range you do not own is not a good idea, and some devices treat it as hostile.
 
+Each device also gets a type where the network says enough to be sure (`camera`, `plug`, `speaker`, `bulb`, `media player`, `IR blaster`, `wearable`, `phone`, `computer`, `printer`, `NAS`, `router`) plus the round-trip time it gave during the sweep. Unrecognised devices stay unlabelled rather than guessed at.
+
 A sweep also marks each known device as having answered or not, and (unless `KASA_PROBE=false`) probes TCP 9999 on the responders and on any address it cannot name. That is how a TP-Link Kasa plug appears even though it ignores ping: a reply on the Kasa port is reported as confirmed, a bare open port as unconfirmed, and the plug's own alias or model is used as its name. Devices that did not answer are still listed, dimmed and marked "not responding", so a stale neighbour entry is not mistaken for live equipment.
 
 ## Add sensors on other hosts (agent mode)

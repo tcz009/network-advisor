@@ -198,12 +198,15 @@ function mapLeaves(data) {
         ? (kasa.alias || kasa.model || (kasa.confirmed ? 'Kasa device' : 'Port 9999 open'))
         : null;
       const vendor = kasaName || (device.label && device.label !== 'Randomised MAC' ? device.label : null);
+      const latency = typeof device.sweepMs === 'number' ? fmtMs(device.sweepMs) : null;
       return {
         ip: device.ip,
         vendor,
         name: device.hostname || vendor || null,
         seenBy: device.seenBy || [],
         unresponsive: device.responded === false,
+        kind: device.kind || null,
+        latency,
         kasa: Boolean(kasa && kasa.confirmed)
       };
     });
@@ -223,11 +226,15 @@ function mapLeaves(data) {
     unresponsive: entry.unresponsive,
     title: [
       entry.ip,
+      entry.kind,
       entry.vendor && entry.vendor !== entry.name ? entry.vendor : null,
       entry.seenBy.length > 1 ? `seen by ${entry.seenBy.length} hosts` : null,
       entry.unresponsive ? 'did not answer the last sweep' : null
     ].filter(Boolean).join(' · '),
-    lines: [entry.ip, entry.unresponsive ? 'not responding' : ''].filter(Boolean)
+    lines: [
+      entry.ip,
+      entry.unresponsive ? 'not responding' : [entry.kind, entry.latency].filter(Boolean).join(' · ')
+    ].filter(Boolean)
   }));
 
   const unnamed = entries.filter(entry => !entry.name);
@@ -378,7 +385,8 @@ function renderArp(devices) {
     const seenBy = Array.isArray(item.seenBy) && item.seenBy.length > 1
       ? `seen by ${item.seenBy.join(' + ')}` : '';
     const liveness = item.responded === false ? 'not responding to the last sweep' : '';
-    const secondary = [vendor, seenBy, liveness].filter(Boolean).join(' · ');
+    const latency = typeof item.sweepMs === 'number' ? fmtMs(item.sweepMs) : '';
+    const secondary = [item.kind, vendor, latency, seenBy, liveness].filter(Boolean).join(' · ');
     return `<div class="arp-row"><span>${escapeHtml(title)}</span><code>${escapeHtml(detail)}</code>${secondary ? `<small class="table-secondary">${escapeHtml(secondary)}</small>` : ''}</div>`;
   }).join('') : '<p class="muted-copy">No recent neighbour entries. Devices appear here after the NAS has communicated with them.</p>';
 }
