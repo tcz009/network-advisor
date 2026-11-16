@@ -463,6 +463,21 @@ function renderChanges(events) {
   }).join('');
 }
 
+function renderDnsClients(clients) {
+  const list = Array.isArray(clients) ? clients.slice(0, 5) : [];
+  if (!list.length) return '';
+  const byIp = new Map(((latest && latest.devices) || []).map(device => [device.ip, device]));
+  const rows = list.map(client => {
+    const device = byIp.get(client.ip);
+    // Prefer what the map already knows about the device over Pi-hole's name.
+    const name = device ? (device.hostname || device.label || device.ip) : (client.name || client.ip);
+    const room = device && device.room ? ` · ${device.room}` : '';
+    const blocked = client.blocked > 0 ? ` <i>${Number(client.blocked).toLocaleString()} blocked</i>` : '';
+    return `<div class="dns-client"><span class="dns-client-name" title="${escapeHtml(name + room)}">${escapeHtml(String(name).slice(0, 20))}${escapeHtml(room)}</span><b>${Number(client.queries).toLocaleString()}${blocked}</b></div>`;
+  }).join('');
+  return `<div class="dns-clients"><div class="mini-label">TOP DNS CLIENTS</div>${rows}</div>`;
+}
+
 function renderPihole(pihole) {
   const body = $('pihole-body');
   if (!pihole || pihole.configured === false) {
@@ -483,7 +498,8 @@ function renderPihole(pihole) {
       <div><span>Queries today</span><b>${escapeHtml(Number(summary.queries || 0).toLocaleString())}</b></div>
       <div><span>Blocked</span><b>${escapeHtml(Number(summary.blocked || 0).toLocaleString())}</b></div>
       ${top ? `<div><span>Top blocked</span><b title="${escapeHtml(top.domain)}">${escapeHtml(String(top.domain).slice(0, 22))}</b></div>` : ''}
-    </div>`;
+    </div>
+    ${renderDnsClients(pihole.clients)}`;
 }
 
 function renderUpstream(lldp) {

@@ -137,3 +137,10 @@ body.data-stale .metric-card,body.data-stale .map-panel,body.data-stale .devices
 .settings-check{display:flex;align-items:center;gap:8px;font-size:11px;color:#b9c8ce}
 .settings-actions{display:flex;align-items:center;gap:14px;border-top:1px solid #1e2b35;padding-top:14px}
 .settings-fixed .muted-copy{margin:0}
+
+/* DNS clients */
+.dns-clients{flex-basis:100%;margin-top:8px;border-top:1px solid #1e2b35;padding-top:8px}
+.dns-client{display:flex;justify-content:space-between;gap:10px;font-size:9px;color:#91a2ad;padding:2px 0}
+.dns-client-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dns-client b{font-family:var(--mono);color:var(--text);font-weight:600;white-space:nowrap}
+.dns-client b i{font-style:normal;color:var(--amber);font-weight:500}

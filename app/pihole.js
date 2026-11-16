@@ -88,6 +88,36 @@ function summariseSummary(payload) {
   };
 }
 
+// Merges the allowed and blocked client lists so each device carries both
+// counts. Pi-hole's own loopback entries are dropped: they are not devices.
+function mergeClients(allowedPayload, blockedPayload) {
+  const skip = new Set(['127.0.0.1', '::1', '::', 'pi.hole']);
+  const blockedByIp = new Map(
+    ((blockedPayload && blockedPayload.clients) || []).map(c => [c.ip, Number(c.count) || 0])
+  );
+  const seen = new Map();
+  for (const client of (allowedPayload && allowedPayload.clients) || []) {
+    if (!client || skip.has(client.ip)) continue;
+    seen.set(client.ip, {
+      ip: client.ip,
+      name: client.name || null,
+      queries: Number(client.count) || 0,
+      blocked: blockedByIp.get(client.ip) || 0
+    });
+  }
+  // A client can appear as blocked without being in the allowed top list.
+  for (const client of (blockedPayload && blockedPayload.clients) || []) {
+    if (!client || skip.has(client.ip) || seen.has(client.ip)) continue;
+    seen.set(client.ip, {
+      ip: client.ip,
+      name: client.name || null,
+      queries: Number(client.count) || 0,
+      blocked: Number(client.count) || 0
+    });
+  }
+  return [...seen.values()].sort((a, b) => b.queries - a.queries).slice(0, 8);
+}
+
 function summariseTopDomains(payload) {
   const list = (payload && (payload.domains || payload.top_domains)) || [];
   return list.slice(0, 5).map(entry => ({
@@ -102,15 +132,18 @@ async function fetchPihole() {
 
   try {
     const sid = await login();
-    const [summaryRaw, blockedRaw] = await Promise.all([
+    const [summaryRaw, blockedRaw, clientsRaw, blockedClientsRaw] = await Promise.all([
       apiGet('/api/stats/summary', sid),
-      apiGet('/api/stats/top_domains?blocked=true&count=5', sid).catch(() => null)
+      apiGet('/api/stats/top_domains?blocked=true&count=5', sid).catch(() => null),
+      apiGet('/api/stats/top_clients?count=10', sid).catch(() => null),
+      apiGet('/api/stats/top_clients?count=10&blocked=true', sid).catch(() => null)
     ]);
     const value = {
       configured: true,
       ok: true,
       summary: summariseSummary(summaryRaw),
       topBlocked: summariseTopDomains(blockedRaw),
+      clients: mergeClients(clientsRaw, blockedClientsRaw),
       checkedAt: new Date().toISOString()
     };
     cache = { at: Date.now(), value };
@@ -133,4 +166,4 @@ function isStale() {
   return !cache.value || Date.now() - cache.at >= CACHE_MS;
 }
 
-module.exports = { fetchPihole, lastValue, isStale, configured, configure, currentConfig, rawConfig, summariseSummary, summariseTopDomains };
+module.exports = { fetchPihole, lastValue, isStale, configured, configure, currentConfig, rawConfig, mergeClients, summariseSummary, summariseTopDomains };

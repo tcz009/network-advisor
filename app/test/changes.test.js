@@ -66,6 +66,21 @@ test('Pi-hole payloads are reduced to the numbers the dashboard shows', () => {
   assert.equal(top[1].count, 7);
 });
 
+test('Pi-hole clients are merged with their blocked counts, loopback dropped', () => {
+  const allowed = { clients: [
+    { ip: '192.168.1.167', name: 'laptop', count: 500 },
+    { ip: '127.0.0.1', name: 'localhost', count: 400 },
+    { ip: '192.168.1.14', name: 'phone', count: 300 }
+  ] };
+  const blocked = { clients: [{ ip: '192.168.1.167', name: 'laptop', count: 120 }] };
+  const clients = pihole.mergeClients(allowed, blocked);
+  assert.equal(clients.length, 2, 'loopback must be excluded');
+  assert.equal(clients[0].ip, '192.168.1.167');
+  assert.equal(clients[0].queries, 500);
+  assert.equal(clients[0].blocked, 120);
+  assert.equal(clients[1].blocked, 0);
+});
+
 test('a malformed Pi-hole payload does not throw', () => {
   assert.deepEqual(pihole.summariseSummary(null), { queries: 0, blocked: 0, percentBlocked: 0, uniqueDomains: 0 });
   assert.deepEqual(pihole.summariseTopDomains({}), []);
