@@ -421,7 +421,7 @@ function renderArp(devices) {
     const liveness = item.responded === false ? 'not responding to the last sweep' : '';
     const latency = typeof item.sweepMs === 'number' ? fmtMs(item.sweepMs) : '';
     const secondary = [item.kind, vendor, latency, item.note, seenBy, liveness].filter(Boolean).join(' · ');
-    return `<div class="arp-row"><span title="${escapeHtml(fullName)}">${escapeHtml(title)}</span><code>${escapeHtml(detail)}</code><input class="room-input" data-mac="${escapeHtml(item.mac)}" value="${escapeHtml(item.room || '')}" placeholder="room" aria-label="Room for ${escapeHtml(title)}">${secondary ? `<small class="table-secondary">${escapeHtml(secondary)}</small>` : ''}</div>`;
+    return `<div class="arp-row"><span title="${escapeHtml(fullName)}">${escapeHtml(title)}</span><code>${escapeHtml(detail)}</code><input class="room-input" data-key="${escapeHtml(item.mac || item.ip)}"" value="${escapeHtml(item.room || '')}" placeholder="room" aria-label="Room for ${escapeHtml(title)}">${secondary ? `<small class="table-secondary">${escapeHtml(secondary)}</small>` : ''}</div>`;
   }).join('') : '<p class="muted-copy">No recent neighbour entries. Devices appear here after the NAS has communicated with them.</p>';
 }
 
@@ -593,13 +593,13 @@ async function forgetNode(id) {
 $('arp-list').addEventListener('change', async event => {
   const input = event.target.closest('.room-input');
   if (!input) return;
-  const mac = input.dataset.mac;
+  const key = input.dataset.key;
   const room = input.value.trim();
   try {
     const response = await fetch('/api/rooms', {
       method: 'PUT',
       headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
-      body: JSON.stringify({ mac, room }),
+      body: JSON.stringify({ key, room }),
       signal: timeoutSignal(8000)
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);

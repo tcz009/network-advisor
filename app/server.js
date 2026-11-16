@@ -969,7 +969,7 @@ function annotateDevices(devices, {
     });
     const annotated = {
       ...device,
-      room: roomMap[String(device.mac || '').toLowerCase()] || null,
+      room: roomMap[String(device.mac || '').toLowerCase()] || roomMap[device.ip] || null,
       kasa,
       mdns: broadcast ? broadcast.mdns : null,
       upnp: broadcast ? broadcast.upnp : null,
@@ -1107,12 +1107,16 @@ async function handle(req, res) {
     }
     try {
       const body = await readBody(req);
-      const mac = String(body.mac || '').trim().toLowerCase();
-      if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return json(res, 400, { error: 'Invalid mac' });
+      // A device seen only by broadcast discovery has no MAC, so an address is
+      // accepted as the key too.
+      const key = String(body.key || body.mac || '').trim().toLowerCase();
+      const isMac = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(key);
+      const isAddress = /^(\d{1,3}\.){3}\d{1,3}$/.test(key);
+      if (!isMac && !isAddress) return json(res, 400, { error: 'Invalid mac or address' });
       const room = cleanText(body.room, 40);
-      if (room) rooms[mac] = room; else delete rooms[mac];
+      if (room) rooms[key] = room; else delete rooms[key];
       saveRooms();
-      return json(res, 200, { ok: true, mac, room: room || null });
+      return json(res, 200, { ok: true, key, room: room || null });
     } catch (err) {
       return json(res, err.status || 400, { error: err.message });
     }

@@ -453,6 +453,16 @@ test('HTTP endpoints behave under attack and normal use', async t => {
     assert.equal((await (await fetch(`${base}/api/rooms`)).json()).rooms[mac], undefined);
   });
 
+  await t.test('a room can be keyed by address for a device with no MAC', async () => {
+    const put = await fetch(`${base}/api/rooms`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      body: JSON.stringify({ key: '192.168.1.101', room: 'Study' })
+    });
+    assert.equal(put.status, 200);
+    assert.equal((await (await fetch(`${base}/api/rooms`)).json()).rooms['192.168.1.101'], 'Study');
+  });
+
   await t.test('setting a room needs the intent header and a real MAC', async () => {
     const withoutHeader = await fetch(`${base}/api/rooms`, {
       method: 'PUT',
