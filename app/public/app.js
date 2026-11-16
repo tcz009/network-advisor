@@ -759,11 +759,76 @@ async function forgetNode(id) {
   } catch { return false; }
 }
 
-$('pihole-open').addEventListener('click', () => {
-  const form = $('pihole-form');
-  form.hidden = !form.hidden;
-  if (!form.hidden) $('pihole-token').focus();
+function setStateLabel(id, isSet, extra = '') {
+  const el = $(id);
+  if (el) el.textContent = isSet ? `Set${extra ? ` · ${extra}` : ''}` : 'Not set';
+}
+
+async function openSettings() {
+  const dialog = $('settings-dialog');
+  dialog.showModal();
+  $('settings-result').textContent = '';
+  try {
+    const settings = await (await fetch('/api/settings', { cache: 'no-store' })).json();
+    $('settings-agent-token').value = '';
+    $('settings-agent-tokens').value = '';
+    $('settings-webhook').value = '';
+    $('settings-pihole-token').value = '';
+    $('settings-pihole-url').value = settings.pihole?.url || '';
+    $('settings-subnet').value = settings.discovery?.scanSubnet || '';
+    $('settings-public-ip').checked = Boolean(settings.privacy?.publicIpCheck);
+
+    setStateLabel('settings-shared-state', settings.sensors?.sharedTokenSet);
+    setStateLabel('settings-per-sensor-state', Boolean(settings.sensors?.names?.length), (settings.sensors?.names || []).join(', '));
+    setStateLabel('settings-webhook-state', settings.alerts?.webhookSet, settings.alerts?.webhookHost || '');
+    setStateLabel('settings-pihole-state', settings.pihole?.tokenSet, settings.pihole?.ok ? 'working' : 'saved, not answering');
+    $('settings-fixed').textContent = `LLDP on ${settings.fixed?.lldpIface || 'eno1'} (${settings.fixed?.lldp ? 'on' : 'off'}), powerline capture on, change these with the container environment.`;
+  } catch (err) {
+    $('settings-result').textContent = `Could not read settings: ${err.message}`;
+  }
+}
+
+$('open-settings').addEventListener('click', openSettings);
+$('settings-close').addEventListener('click', () => $('settings-dialog').close());
+
+$('settings-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const body = {
+    scanSubnet: $('settings-subnet').value.trim(),
+    publicIpCheck: $('settings-public-ip').checked,
+    piholeUrl: $('settings-pihole-url').value.trim() || null
+  };
+  const shared = $('settings-agent-token').value.trim();
+  const perSensor = $('settings-agent-tokens').value.trim();
+  const webhook = $('settings-webhook').value.trim();
+  const piholeKey = $('settings-pihole-token').value.trim();
+  if (shared) body.agentToken = shared;
+  if (perSensor) body.agentTokens = perSensor;
+  if (webhook) body.alertWebhook = webhook;
+  if (piholeKey) body.piholeToken = piholeKey;
+
+  const result = $('settings-result');
+  result.textContent = 'Saving…';
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      cache: 'no-store',
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    result.textContent = 'Saved.';
+    toast('Settings saved');
+    await refresh();
+    setTimeout(() => $('settings-dialog').close(), 600);
+  } catch (err) {
+    result.textContent = err.message;
+    toast(`Could not save: ${err.message}`);
+  }
 });
+
+$('pihole-open').addEventListener('click', openSettings);
 $('pihole-cancel').addEventListener('click', () => { $('pihole-form').hidden = true; });
 
 $('pihole-form').addEventListener('submit', async event => {

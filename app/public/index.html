@@ -124,5 +124,43 @@
   </div>
   <div id="toast" class="toast" role="status"></div>
   <script src="/app.js"></script>
+  <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+    <form id="settings-form" method="dialog">
+      <div class="settings-head">
+        <div><div class="eyebrow">NETWORK ADVISOR</div><h2 id="settings-title">Settings</h2></div>
+        <button type="button" id="settings-close" class="small-button ghost" aria-label="Close settings">Close</button>
+      </div>
+
+      <section class="settings-section">
+        <h3>Automation &amp; keys</h3>
+        <p class="muted-copy">Secrets are stored on the NAS, readable only by the dashboard. Blank means "leave unchanged".</p>
+        <label class="settings-row"><span>Sensor shared token<small id="settings-shared-state">Not set</small></span><input id="settings-agent-token" type="password" autocomplete="off" spellcheck="false" placeholder="set a token to accept reports from the Pis"></label>
+        <label class="settings-row"><span>Per-sensor tokens<small id="settings-per-sensor-state">Not set</small></span><input id="settings-agent-tokens" type="text" autocomplete="off" spellcheck="false" placeholder="MediaPi=abc123,vpngate=def456"></label>
+        <label class="settings-row"><span>Change webhook<small id="settings-webhook-state">Not set</small></span><input id="settings-webhook" type="text" autocomplete="off" spellcheck="false" placeholder="https://ntfy.sh/your-topic"></label>
+      </section>
+
+      <section class="settings-section">
+        <h3>Pi-hole</h3>
+        <label class="settings-row"><span>Address</span><input id="settings-pihole-url" type="url" spellcheck="false" placeholder="http://192.168.1.2"></label>
+        <label class="settings-row"><span>API key<small id="settings-pihole-state">Not set</small></span><input id="settings-pihole-token" type="password" autocomplete="off" spellcheck="false" placeholder="app password from Pi-hole → Settings → API"></label>
+      </section>
+
+      <section class="settings-section">
+        <h3>Discovery</h3>
+        <label class="settings-row"><span>Scan subnet<small>Active sweeps only; empty leaves the app passive</small></span><input id="settings-subnet" type="text" spellcheck="false" placeholder="192.168.1.0/24"></label>
+        <label class="settings-check"><input id="settings-public-ip" type="checkbox"><span>Look up the public IP (one outbound call per 10 minutes)</span></label>
+      </section>
+
+      <section class="settings-section settings-fixed">
+        <h3>Fixed by the container</h3>
+        <p class="muted-copy" id="settings-fixed"></p>
+      </section>
+
+      <div class="settings-actions">
+        <button type="submit" class="primary-button" id="settings-save">Save settings</button>
+        <span class="muted-copy" id="settings-result"></span>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

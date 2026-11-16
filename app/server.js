@@ -14,7 +14,7 @@ const { classifyDevice } = require('./kinds');
 const { discoverDevices } = require('./discovery');
 const { parseLldpCapture, readCapture } = require('./lldp');
 const { snapshot, computeChanges, appendEvents } = require('./changes');
-const { fetchPihole, lastValue: lastPihole, isStale: piholeStale, configure: configurePihole, currentConfig: piholeConfig, rawConfig: piholeRawConfig } = require('./pihole');
+const { fetchPihole, lastValue: lastPihole, isStale: piholeStale, configured: piholeConfigured, configure: configurePihole, currentConfig: piholeConfig, rawConfig: piholeRawConfig } = require('./pihole');
 const { parsePlctool } = require('./powerline');
 
 const exec = promisify(execFile);
@@ -36,7 +36,9 @@ const TARGET = process.env.CHECK_TARGET || '1.1.1.1';
 const HOSTNAME = process.env.CHECK_HOSTNAME || 'cloudflare.com';
 // Active discovery is opt-in: with SCAN_SUBNET unset the app stays passive and
 // only reports what the NAS has recently talked to.
-const SCAN_SUBNET = process.env.SCAN_SUBNET || '';
+// Runtime settings: environment provides the defaults, the settings API can
+// change these without a restart, and saved settings override at boot.
+let scanSubnet = process.env.SCAN_SUBNET || '';
 const SCAN_MIN_INTERVAL_MS = 30_000;
 // Kasa plugs answer on TCP 9999 even when they ignore ICMP, so a sweep probes it.
 // Set KASA_PROBE=false to leave the scan to ICMP only.
@@ -50,10 +52,10 @@ const LLDP_PCAP = process.env.LLDP_PCAP || '/lldp/lldp.pcap';
 const POWERLINE_FILE = process.env.POWERLINE_FILE || '/lldp/powerline.txt';
 const LLDP_ENABLED = String(process.env.LLDP || 'true').toLowerCase() !== 'false';
 // Optional webhook (ntfy, Telegram, anything that takes JSON) for device changes.
-const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK || '';
+let alertWebhook = process.env.ALERT_WEBHOOK || '';
 // Knowing your public address makes a VPN or ISP change visible; opt out with
 // PUBLIC_IP_CHECK=false and the dashboard never calls out for it.
-const PUBLIC_IP_CHECK = String(process.env.PUBLIC_IP_CHECK || 'true').toLowerCase() !== 'false';
+let publicIpCheck = String(process.env.PUBLIC_IP_CHECK || 'true').toLowerCase() !== 'false';
 // Per-device round-trip history: enough to see a trend, not a flood.
 const LATENCY_SAMPLES = 96;
 const LATENCY_PUBLISHED = 24;
@@ -74,10 +76,10 @@ const ALLOWED_HOSTS = String(process.env.ALLOWED_HOSTS || '')
 // Agent mode turns the same image into a vantage point that pushes its own view
 // to a hub. It opens no ports, so it is safe to run beside Pi-hole or a router.
 const ROLE = (process.env.ROLE || 'hub').toLowerCase();
-const AGENT_TOKEN = process.env.AGENT_TOKEN || '';
+let agentToken = process.env.AGENT_TOKEN || '';
 // AGENT_TOKENS=MediaPi=abc,vpngate=def binds a token to a sensor name, so one
 // leaked token cannot rewrite every other sensor's readings.
-const AGENT_TOKENS = parseAgentTokens(process.env.AGENT_TOKENS || '');
+let AGENT_TOKENS = parseAgentTokens(process.env.AGENT_TOKENS || '');
 const ADVISOR_HUB = (process.env.ADVISOR_HUB || '').replace(/\/+$/, '');
 const AGENT_NAME = process.env.AGENT_NAME || os.hostname();
 const AGENT_INTERVAL_MS = Math.max(15_000, Number(process.env.AGENT_INTERVAL_MS) || 30_000);
@@ -124,6 +126,31 @@ let discoveryByIp = new Map();
 let lldpCache = { mtime: 0, value: null };
 let powerlineCache = { mtime: 0, value: null };
 let powerlineHistory = [];   // [{at, tx, rx, stations}]
+let savedSettings = {};
+
+// Applies anything persisted; called at boot and after each change.
+function applySettings(next) {
+  savedSettings = { ...savedSettings, ...next };
+  if ('pihole' in next && next.pihole && next.pihole.token) {
+    configurePihole({ base: next.pihole.url || piholeRawConfig().base, token: next.pihole.token });
+  }
+  if ('agentToken' in next) agentToken = String(next.agentToken || '');
+  if ('agentTokens' in next) AGENT_TOKENS = parseAgentTokens(String(next.agentTokens || ''));
+  if ('alertWebhook' in next) alertWebhook = String(next.alertWebhook || '');
+  if ('scanSubnet' in next) scanSubnet = String(next.scanSubnet || '');
+  if ('publicIpCheck' in next) publicIpCheck = Boolean(next.publicIpCheck);
+}
+
+function persistSettings(patch) {
+  applySettings(patch);
+  try {
+    writeJsonAtomic(SETTINGS_FILE, savedSettings);
+    fs.chmodSync(SETTINGS_FILE, 0o600);
+  } catch (err) {
+    console.error('Could not save settings:', err.message);
+  }
+}
+
 let changeEvents = [];
 let publicIp = { value: null, at: 0, error: null };
 let deviceSnapshot = new Map();
@@ -698,9 +725,8 @@ function loadState() {
   }
 
   const loadedSettings = readJsonFile(SETTINGS_FILE);
-  if (loadedSettings.ok && loadedSettings.value && loadedSettings.value.pihole) {
-    const saved = loadedSettings.value.pihole;
-    if (saved.token) configurePihole({ base: saved.url || piholeConfig().base, token: saved.token });
+  if (loadedSettings.ok && loadedSettings.value && typeof loadedSettings.value === 'object') {
+    applySettings(loadedSettings.value);
   }
 
   const loadedLatency = readJsonFile(LATENCY_FILE);
@@ -748,9 +774,9 @@ function trimNodes() {
 // One reading of this host: used both by a hub check and by an agent report so
 // the two never drift apart.
 async function notifyChanges(events) {
-  if (!ALERT_WEBHOOK || !events.length) return;
+  if (!alertWebhook || !events.length) return;
   try {
-    await fetch(ALERT_WEBHOOK, {
+    await fetch(alertWebhook, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -766,7 +792,7 @@ async function notifyChanges(events) {
 }
 
 async function refreshPublicIp() {
-  if (!PUBLIC_IP_CHECK) return;
+  if (!publicIpCheck) return;
   if (Date.now() - publicIp.at < 10 * 60_000) return;
   try {
     const response = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(5000) });
@@ -963,9 +989,9 @@ function runCheck() {
 }
 
 async function runScan() {
-  const parsed = parseCidr(SCAN_SUBNET);
+  const parsed = parseCidr(scanSubnet);
   if (!parsed) {
-    return { enabled: false, error: SCAN_SUBNET ? 'SCAN_SUBNET must be a CIDR between /22 and /30' : 'Active discovery is off' };
+    return { enabled: false, error: scanSubnet ? 'The scan subnet must be a CIDR between /22 and /30' : 'Active discovery is off' };
   }
   // Concurrent callers used to start one sweep each: the cooldown only consulted
   // a timestamp written after the sweep finished. One sweep at a time now.
@@ -1275,7 +1301,7 @@ async function startAgent() {
       };
       const response = await fetch(`${ADVISOR_HUB}/api/agents/report`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-advisor-token': AGENT_TOKEN },
+        headers: { 'content-type': 'application/json', 'x-advisor-token': agentToken },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10_000)
       });
@@ -1324,7 +1350,7 @@ async function handle(req, res) {
     const checkAgeMs = lastCheck ? now - new Date(lastCheck.checkedAt).getTime() : null;
     const activeNodes = Object.values(nodes).map(node => ({ ...node, online: now - node.lastSeen < 25_000 }));
     const gateway = readGateway();
-    const subnet = parseCidr(SCAN_SUBNET);
+    const subnet = parseCidr(scanSubnet);
     return json(res, 200, {
       app: 'Network Advisor',
       version: VERSION,
@@ -1346,7 +1372,7 @@ async function handle(req, res) {
         startedAt: lastScanStartedAt || null,
         finishedAt: lastScan ? lastScan.finishedAt : null,
         running: Boolean(scanInFlight),
-        enabled: Boolean(parseCidr(SCAN_SUBNET))
+        enabled: Boolean(parseCidr(scanSubnet))
       },
       lldp: lldpNeighbours(),
       powerline: powerlineState(mergedDevices()),
@@ -1408,6 +1434,77 @@ async function handle(req, res) {
     return json(res, 200, lastPihole());
   }
 
+  if (reqUrl.pathname === '/api/settings' && req.method === 'GET') {
+    const pihole = piholeConfig();
+    const sensors = Object.keys(AGENT_TOKENS);
+    let webhookHost = null;
+    try { webhookHost = alertWebhook ? new URL(alertWebhook).host : null; } catch { webhookHost = 'invalid'; }
+    return json(res, 200, {
+      // Secrets are reduced to "set / not set": nothing is ever returned.
+      sensors: { enabled: Boolean(agentToken) || sensors.length > 0, perSensor: sensors.length > 0, sharedTokenSet: Boolean(agentToken), names: sensors },
+      alerts: { webhookSet: Boolean(alertWebhook), webhookHost },
+      pihole: { url: pihole.base || null, tokenSet: pihole.tokenSet, configured: piholeConfigured(), ok: lastPihole().ok === true },
+      discovery: { scanSubnet: scanSubnet || null, sweepEnabled: Boolean(parseCidr(scanSubnet)) },
+      privacy: { publicIpCheck },
+      fixed: { lldp: LLDP_ENABLED, lldpIface: process.env.LLDP_IFACE || 'eno1', powerline: true }
+    });
+  }
+
+  if (reqUrl.pathname === '/api/settings' && req.method === 'PUT') {
+    if (req.headers['x-advisor-intent'] !== 'write') {
+      return json(res, 403, { error: 'Set x-advisor-intent: write to change settings.' });
+    }
+    const body = (await readBody(req)) || {};
+    const patch = {};
+
+    if ('scanSubnet' in body) {
+      const value = body.scanSubnet === null ? '' : String(body.scanSubnet).trim();
+      if (value && !parseCidr(value)) return json(res, 400, { error: 'Scan subnet must be a CIDR between /22 and /30, or empty.' });
+      patch.scanSubnet = value;
+    }
+    if ('alertWebhook' in body) {
+      const value = body.alertWebhook === null ? '' : String(body.alertWebhook).trim();
+      if (value && !/^https?:\/\/[^\s]+$/.test(value)) return json(res, 400, { error: 'Webhook must be an http(s) URL, or empty.' });
+      patch.alertWebhook = value;
+    }
+    if ('agentToken' in body) {
+      const value = body.agentToken === null ? '' : String(body.agentToken).trim();
+      if (value && value.length < 8) return json(res, 400, { error: 'Sensor shared token must be at least 8 characters.' });
+      patch.agentToken = value;
+    }
+    if ('agentTokens' in body) {
+      const value = body.agentTokens === null ? '' : String(body.agentTokens).trim();
+      patch.agentTokens = value;
+    }
+    if ('publicIpCheck' in body) patch.publicIpCheck = Boolean(body.publicIpCheck);
+
+    // A Pi-hole key is only kept if Pi-hole accepts it.
+    if ('piholeToken' in body || 'piholeUrl' in body) {
+      const token = 'piholeToken' in body
+        ? (body.piholeToken === null ? '' : String(body.piholeToken).trim())
+        : piholeRawConfig().token;
+      const base = 'piholeUrl' in body
+        ? (body.piholeUrl === null ? '' : String(body.piholeUrl).trim())
+        : piholeRawConfig().base;
+      if (base && !/^https?:\/\/[^\s]+$/.test(base)) return json(res, 400, { error: 'Pi-hole URL must start with http:// or https://' });
+      if (token) {
+        const previous = piholeRawConfig();
+        configurePihole({ base, token });
+        const result = await fetchPihole();
+        if (!result || result.ok !== true) {
+          configurePihole(previous);
+          return json(res, 400, { error: result && result.error ? `Pi-hole rejected it: ${result.error}` : 'Pi-hole did not accept that key' });
+        }
+        patch.pihole = { url: base, token };
+      } else {
+        patch.pihole = { url: base, token: '' };
+      }
+    }
+
+    persistSettings(patch);
+    return json(res, 200, { ok: true });
+  }
+
   // Paste-a-key setup for Pi-hole; the token is stored 0600 and never returned.
   if (reqUrl.pathname === '/api/settings/pihole' && req.method === 'POST') {
     if (req.headers['x-advisor-intent'] !== 'write') {
@@ -1432,12 +1529,7 @@ async function handle(req, res) {
         pihole: lastPihole()
       });
     }
-    try {
-      writeJsonAtomic(SETTINGS_FILE, { pihole: { url, token } });
-      fs.chmodSync(SETTINGS_FILE, 0o600);
-    } catch (err) {
-      console.error('Could not save settings:', err.message);
-    }
+    persistSettings({ pihole: { url, token } });
     return json(res, 200, { ok: true, pihole: result });
   }
 
@@ -1457,11 +1549,11 @@ async function handle(req, res) {
       powerline: powerlineState(mergedDevices()),
       changes: changeEvents.slice(-100),
       config: {
-        scanSubnet: SCAN_SUBNET || null,
+        scanSubnet: scanSubnet || null,
         kasaProbe: KASA_PROBE,
         discovery: DISCOVERY,
         lldp: LLDP_ENABLED,
-        agentIntake: Boolean(AGENT_TOKEN) || Object.keys(AGENT_TOKENS).length > 0
+        agentIntake: Boolean(agentToken) || Object.keys(AGENT_TOKENS).length > 0
       }
     });
   }
@@ -1471,19 +1563,19 @@ async function handle(req, res) {
   }
 
   if (reqUrl.pathname === '/api/agents' && req.method === 'GET') {
-    const intake = Boolean(AGENT_TOKEN) || Object.keys(AGENT_TOKENS).length > 0;
+    const intake = Boolean(agentToken) || Object.keys(AGENT_TOKENS).length > 0;
     return json(res, 200, { agents: activeAgents(), onlineWindowMs: AGENT_ONLINE_MS, intake });
   }
 
   if (reqUrl.pathname === '/api/agents/report' && req.method === 'POST') {
     const perAgent = Object.keys(AGENT_TOKENS).length > 0;
-    if (!AGENT_TOKEN && !perAgent) {
+    if (!agentToken && !perAgent) {
       return json(res, 403, { error: 'Agent intake is disabled; set AGENT_TOKEN or AGENT_TOKENS on the hub' });
     }
     try {
       const body = await readBody(req, 512 * 1024);
       const claimed = sanitiseAgentName(body && body.name);
-      const expected = perAgent ? AGENT_TOKENS[claimed] : AGENT_TOKEN;
+      const expected = perAgent ? AGENT_TOKENS[claimed] : agentToken;
       if (!expected || (!perAgent && !agentTokenMatches(req.headers['x-advisor-token'], expected)) ||
           (perAgent && !agentTokenMatches(req.headers['x-advisor-token'], expected))) {
         return json(res, 403, { error: 'Invalid agent token' });
@@ -1667,9 +1759,9 @@ if (require.main === module) {
   } else {
     server.listen(PORT, BIND_HOST, () => console.log(`Network Advisor listening on ${BIND_HOST}:${PORT}`));
     selfTestPing().catch(() => {});
-    if (!AGENT_TOKEN && !Object.keys(AGENT_TOKENS).length) {
+    if (!agentToken && !Object.keys(AGENT_TOKENS).length) {
       console.warn('Agent intake is disabled (no AGENT_TOKEN / AGENT_TOKENS).');
-    } else if (AGENT_TOKEN && !Object.keys(AGENT_TOKENS).length) {
+    } else if (agentToken && !Object.keys(AGENT_TOKENS).length) {
       console.warn('Using one shared AGENT_TOKEN: any holder can change any sensor. Prefer AGENT_TOKENS=name=token,...');
     } else if (AGENT_TOKEN && Object.keys(AGENT_TOKENS).length) {
       console.warn('Both AGENT_TOKEN and AGENT_TOKENS are set: AGENT_TOKEN is ignored, each sensor needs its own entry.');
@@ -1716,6 +1808,8 @@ module.exports = {
   recordChanges,
   recordScanLatency,
   latencyHistory,
+  applySettings,
+  persistSettings,
   computeChanges,
   lldpNeighbours,
   discoveryByIp,

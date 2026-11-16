@@ -551,6 +551,50 @@ test('HTTP endpoints behave under attack and normal use', async t => {
     assert.equal(after.configured, false);
   });
 
+  await t.test('settings never return a secret', async () => {
+    const body = await (await fetch(`${base}/api/settings`)).json();
+    for (const key of ['sensors', 'alerts', 'pihole', 'discovery', 'privacy', 'fixed']) {
+      assert.ok(key in body, `settings missing ${key}`);
+    }
+    const text = JSON.stringify(body);
+    assert.doesNotMatch(text, /token\s*:\s*"[^"]+"/i, 'a token value leaked');
+    assert.equal(typeof body.pihole.tokenSet, 'boolean');
+    assert.equal(typeof body.sensors.sharedTokenSet, 'boolean');
+  });
+
+  await t.test('settings writes validate and require intent', async () => {
+    const noIntent = await fetch(`${base}/api/settings`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scanSubnet: '192.168.1.0/24' })
+    });
+    assert.equal(noIntent.status, 403);
+
+    const badSubnet = await fetch(`${base}/api/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      body: JSON.stringify({ scanSubnet: 'not-a-cidr' })
+    });
+    assert.equal(badSubnet.status, 400);
+
+    const badWebhook = await fetch(`${base}/api/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      body: JSON.stringify({ alertWebhook: 'ftp://nope' })
+    });
+    assert.equal(badWebhook.status, 400);
+
+    const good = await fetch(`${base}/api/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      body: JSON.stringify({ scanSubnet: '192.168.1.0/24', agentToken: 'a-long-enough-token' })
+    });
+    assert.equal(good.status, 200);
+    const after = await (await fetch(`${base}/api/settings`)).json();
+    assert.equal(after.discovery.scanSubnet, '192.168.1.0/24');
+    assert.equal(after.sensors.sharedTokenSet, true);
+    assert.equal(after.sensors.enabled, true);
+  });
+
   await t.test('history endpoint answers with an array', async () => {
     const response = await fetch(`${base}/api/history`);
     assert.equal(response.status, 200);
