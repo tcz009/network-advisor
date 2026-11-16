@@ -109,7 +109,10 @@ const MIME = {
 const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer' };
 const CONTAINER_IFACE = /^(docker0|docker-|veth|virbr|vmnet|vboxnet|cni|flannel|cali|lxcbr|lxdbr|podman|tun\d|tap\d|wg\d|tailscale|zt)/i;
 const DOCKER_BRIDGE_IFACE = /^br-[0-9a-f]{12}$/i;
-const MAX_ARP_HOSTNAME_LOOKUPS = 16;
+// Every device deserves a name; the lookups run concurrently and each has its
+// own timeout, so the only cost is a burst of PTR queries. The old cap of 16
+// silently left later devices unnamed, which looked like "no name available".
+const MAX_ARP_HOSTNAME_LOOKUPS = 64;
 const VERSION = require('./package.json').version;
 
 let nodes = Object.create(null);
