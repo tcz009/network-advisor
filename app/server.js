@@ -14,7 +14,7 @@ const { classifyDevice } = require('./kinds');
 const { discoverDevices } = require('./discovery');
 const { parseLldpCapture, readCapture } = require('./lldp');
 const { snapshot, computeChanges, appendEvents } = require('./changes');
-const { fetchPihole, lastValue: lastPihole, isStale: piholeStale, configure: configurePihole, currentConfig: piholeConfig } = require('./pihole');
+const { fetchPihole, lastValue: lastPihole, isStale: piholeStale, configure: configurePihole, currentConfig: piholeConfig, rawConfig: piholeRawConfig } = require('./pihole');
 const { parsePlctool } = require('./powerline');
 
 const exec = promisify(execFile);
@@ -1419,15 +1419,26 @@ async function handle(req, res) {
     if (!/^https?:\/\/[^\s]+$/.test(url)) return json(res, 400, { error: 'Pi-hole URL must start with http:// or https://' });
     if (token.length < 4) return json(res, 400, { error: 'That key looks too short.' });
 
+    // Try before keeping: a rejected key must not replace a working one, and
+    // must never be written to disk.
+    const previous = piholeRawConfig();
     configurePihole({ base: url, token });
     const result = await fetchPihole();
+    if (!result || result.ok !== true) {
+      configurePihole(previous);
+      return json(res, 200, {
+        ok: false,
+        error: result && result.error ? result.error : 'Pi-hole did not accept that key',
+        pihole: lastPihole()
+      });
+    }
     try {
       writeJsonAtomic(SETTINGS_FILE, { pihole: { url, token } });
       fs.chmodSync(SETTINGS_FILE, 0o600);
     } catch (err) {
       console.error('Could not save settings:', err.message);
     }
-    return json(res, 200, { ok: Boolean(result && result.ok), pihole: result });
+    return json(res, 200, { ok: true, pihole: result });
   }
 
   if (reqUrl.pathname === '/api/export' && req.method === 'GET') {

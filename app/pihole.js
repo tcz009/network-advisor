@@ -31,6 +31,11 @@ function currentConfig() {
   return { base: config.base, tokenSet: Boolean(config.token) };
 }
 
+// Server-side only: the raw credentials, for reverting a failed change.
+function rawConfig() {
+  return { base: config.base, token: config.token };
+}
+
 function configured() {
   return Boolean(config.base && config.token);
 }
@@ -123,4 +128,4 @@ function isStale() {
   return !cache.value || Date.now() - cache.at >= CACHE_MS;
 }
 
-module.exports = { fetchPihole, lastValue, isStale, configured, configure, currentConfig, summariseSummary, summariseTopDomains };
+module.exports = { fetchPihole, lastValue, isStale, configured, configure, currentConfig, rawConfig, summariseSummary, summariseTopDomains };

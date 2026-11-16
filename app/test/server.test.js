@@ -537,6 +537,20 @@ test('HTTP endpoints behave under attack and normal use', async t => {
     assert.equal(response.status, 400);
   });
 
+  await t.test('a rejected Pi-hole key is not kept', async () => {
+    const response = await fetch(`${base}/api/settings/pihole`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      body: JSON.stringify({ url: 'http://127.0.0.1:9', token: 'definitely-not-valid' })
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, false);
+    // Nothing was persisted, so the dashboard stays unconfigured.
+    const after = await (await fetch(`${base}/api/pihole`)).json();
+    assert.equal(after.configured, false);
+  });
+
   await t.test('history endpoint answers with an array', async () => {
     const response = await fetch(`${base}/api/history`);
     assert.equal(response.status, 200);
