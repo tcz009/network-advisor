@@ -174,9 +174,16 @@ function mapLeaves(data) {
       return { ip: device.ip, vendor, name: device.hostname || vendor || null, seenBy: device.seenBy || [] };
     });
 
+  // mDNS names carry the router's domain; the first label is what a person says.
+  const shortLabel = value => {
+    const text = String(value || '');
+    const cut = text.indexOf('.');
+    return cut > 0 ? text.slice(0, cut) : text;
+  };
+
   const named = entries.filter(entry => entry.name).map(entry => ({
     kind: 'device',
-    name: entry.name,
+    name: shortLabel(entry.name),
     online: true,
     measured: false,
     title: `${entry.ip}${entry.vendor && entry.vendor !== entry.name ? ` · ${entry.vendor}` : ''}${entry.seenBy.length > 1 ? ` · seen by ${entry.seenBy.length} hosts` : ''}`,
