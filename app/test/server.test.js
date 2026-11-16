@@ -431,6 +431,44 @@ test('HTTP endpoints behave under attack and normal use', async t => {
     assert.equal((await response.json()).error, 'Not found');
   });
 
+  await t.test('rooms can be set, read back, and cleared', async () => {
+    const mac = 'aa:bb:cc:dd:ee:ff';
+    const put = await fetch(`${base}/api/rooms`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      body: JSON.stringify({ mac, room: 'Kitchen' })
+    });
+    assert.equal(put.status, 200);
+
+    const listed = await (await fetch(`${base}/api/rooms`)).json();
+    assert.equal(listed.rooms[mac], 'Kitchen');
+
+    // Clearing a room removes the entry.
+    const clear = await fetch(`${base}/api/rooms`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      body: JSON.stringify({ mac, room: '' })
+    });
+    assert.equal(clear.status, 200);
+    assert.equal((await (await fetch(`${base}/api/rooms`)).json()).rooms[mac], undefined);
+  });
+
+  await t.test('setting a room needs the intent header and a real MAC', async () => {
+    const withoutHeader = await fetch(`${base}/api/rooms`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mac: 'aa:bb:cc:dd:ee:ff', room: 'Loft' })
+    });
+    assert.equal(withoutHeader.status, 403);
+
+    const badMac = await fetch(`${base}/api/rooms`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      body: JSON.stringify({ mac: 'not-a-mac', room: 'Loft' })
+    });
+    assert.equal(badMac.status, 400);
+  });
+
   await t.test('history endpoint answers with an array', async () => {
     const response = await fetch(`${base}/api/history`);
     assert.equal(response.status, 200);

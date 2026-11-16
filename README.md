@@ -70,6 +70,18 @@ or put `SCAN_SUBNET=192.168.1.0/24` in a `.env` file beside `compose.yaml`. When
 
 Only your own range is accepted: anything wider than `/22` is refused so a typo cannot turn into a large ICMP blast. Sweeping an address range you do not own is not a good idea, and some devices treat it as hostile.
 
+## Rooms
+
+No packet contains a room name, so rooms are the one thing you tell it. Every device in **Other devices seen** has an inline room field: type `Kitchen`, press Tab, and it is stored against that device's MAC and shown on its map chip and in the room summary above the list.
+
+```sh
+curl -X PUT http://192.168.1.179:8090/api/rooms \
+  -H 'content-type: application/json' -H 'x-advisor-intent: write' \
+  -d '{"mac":"b0:be:76:d6:cc:b7","room":"Loft"}'
+```
+
+Rooms live in `rooms.json` in the data volume. They are keyed by MAC because DHCP moves addresses, which means a device that randomises its MAC (a phone on a privacy setting) needs its room setting again after it rotates.
+
 Devices the network cannot fully describe can carry an operator note (`DEVICE_NOTES`), which shows on the map and in the device list — useful for a hub that fronts equipment with no IP of its own.
 
 Each device also gets a type where the network says enough to be sure (`camera`, `plug`, `speaker`, `bulb`, `media player`, `IR blaster`, `wearable`, `phone`, `computer`, `printer`, `NAS`, `router`) plus the round-trip time it gave during the sweep. Unrecognised devices stay unlabelled rather than guessed at.
@@ -166,6 +178,7 @@ Device labels and measurements are stored in the named Docker volume `network-ad
 | `/api/nodes/<id>` | DELETE | Forget a device (requires `x-advisor-intent: delete`) |
 | `/api/speed/download` | GET | Transfer a fixed-size body for the local speed test |
 | `/api/speed/upload` | POST | Receive up to 2 MiB for the local speed test |
+| `/api/rooms` | GET / PUT | Read room labels, or set one with `{mac, room}` (requires `x-advisor-intent: write`) |
 | `/api/pulse` | GET | Liveness only; no side effects |
 
 A full client contract for another dashboard lives in [`docs/cc-integration.md`](docs/cc-integration.md).

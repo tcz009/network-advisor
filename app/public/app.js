@@ -206,6 +206,7 @@ function mapLeaves(data) {
         seenBy: device.seenBy || [],
         unresponsive: device.responded === false,
         kind: device.kind || null,
+        room: device.room || null,
         note: device.note || null,
         latency,
         kasa: Boolean(kasa && kasa.confirmed)
@@ -227,6 +228,7 @@ function mapLeaves(data) {
     unresponsive: entry.unresponsive,
     title: [
       entry.ip,
+      entry.room,
       entry.kind,
       entry.vendor && entry.vendor !== entry.name ? entry.vendor : null,
       entry.note,
@@ -234,6 +236,7 @@ function mapLeaves(data) {
       entry.unresponsive ? 'did not answer the last sweep' : null
     ].filter(Boolean).join(' · '),
     lines: [
+      entry.room ? entry.room : null,
       entry.ip,
       entry.unresponsive ? 'not responding' : [entry.kind, entry.latency].filter(Boolean).join(' · '),
       entry.note
@@ -378,9 +381,25 @@ function renderMap(data) {
   requestAnimationFrame(drawMapLines);
 }
 
+function renderRooms(devices) {
+  const counts = new Map();
+  let unassigned = 0;
+  for (const device of devices || []) {
+    const room = device.room;
+    if (room) counts.set(room, (counts.get(room) || 0) + 1);
+    else unassigned++;
+  }
+  const pills = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([room, count]) => `<span class="room-pill">${escapeHtml(room)} <b>${count}</b></span>`);
+  if (unassigned) pills.push(`<span class="room-pill unassigned">unassigned <b>${unassigned}</b></span>`);
+  $('rooms-summary').innerHTML = pills.join('');
+}
+
 function renderArp(devices) {
   const rows = devices || [];
   setMetric('seen-count', rows.length, 'devices');
+  renderRooms(rows);
   $('arp-list').innerHTML = rows.length ? rows.slice(0, 12).map(item => {
     const title = item.hostname || item.label || 'Unidentified device';
     const detail = [item.ip, item.mac].filter(Boolean).join(' · ');
@@ -390,7 +409,7 @@ function renderArp(devices) {
     const liveness = item.responded === false ? 'not responding to the last sweep' : '';
     const latency = typeof item.sweepMs === 'number' ? fmtMs(item.sweepMs) : '';
     const secondary = [item.kind, vendor, latency, item.note, seenBy, liveness].filter(Boolean).join(' · ');
-    return `<div class="arp-row"><span>${escapeHtml(title)}</span><code>${escapeHtml(detail)}</code>${secondary ? `<small class="table-secondary">${escapeHtml(secondary)}</small>` : ''}</div>`;
+    return `<div class="arp-row"><span>${escapeHtml(title)}</span><code>${escapeHtml(detail)}</code><input class="room-input" data-mac="${escapeHtml(item.mac)}" value="${escapeHtml(item.room || '')}" placeholder="room" aria-label="Room for ${escapeHtml(title)}">${secondary ? `<small class="table-secondary">${escapeHtml(secondary)}</small>` : ''}</div>`;
   }).join('') : '<p class="muted-copy">No recent neighbour entries. Devices appear here after the NAS has communicated with them.</p>';
 }
 
@@ -558,6 +577,26 @@ async function forgetNode(id) {
     return response.ok;
   } catch { return false; }
 }
+
+$('arp-list').addEventListener('change', async event => {
+  const input = event.target.closest('.room-input');
+  if (!input) return;
+  const mac = input.dataset.mac;
+  const room = input.value.trim();
+  try {
+    const response = await fetch('/api/rooms', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      body: JSON.stringify({ mac, room }),
+      signal: timeoutSignal(8000)
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    toast(room ? `Saved ${room}` : 'Room cleared');
+    await refresh();
+  } catch {
+    toast('Could not save that room');
+  }
+});
 
 $('nodes-table').addEventListener('click', async event => {
   const button = event.target.closest('.row-delete');

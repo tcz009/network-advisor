@@ -20,6 +20,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'nodes.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 const AGENTS_FILE = path.join(DATA_DIR, 'agents.json');
+const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
 const TARGET = process.env.CHECK_TARGET || '1.1.1.1';
 const HOSTNAME = process.env.CHECK_HOSTNAME || 'cloudflare.com';
 // Active discovery is opt-in: with SCAN_SUBNET unset the app stays passive and
@@ -75,6 +76,9 @@ const MAX_ARP_HOSTNAME_LOOKUPS = 16;
 const VERSION = require('./package.json').version;
 
 let nodes = Object.create(null);
+// mac -> room. Keyed by MAC because DHCP moves addresses around; a device with
+// a randomised MAC will need its room setting again after it rotates.
+let rooms = Object.create(null);
 let agents = Object.create(null);
 let history = [];
 let lastCheck = null;
@@ -547,6 +551,15 @@ function scheduleSave() {
   saveTimer.unref?.();
 }
 
+function saveRooms() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    writeJsonAtomic(ROOMS_FILE, rooms);
+  } catch (err) {
+    console.error('Could not save rooms:', err.message);
+  }
+}
+
 function saveHistory() {
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -603,6 +616,14 @@ function loadState() {
 
   trimNodes();
   trimAgents(agents);
+
+  const loadedRooms = readJsonFile(ROOMS_FILE);
+  if (loadedRooms.ok) {
+    for (const [mac, room] of Object.entries(loadedRooms.value || {})) {
+      if (typeof room !== 'string' || !room) continue;
+      rooms[mac.toLowerCase()] = room.slice(0, 40);
+    }
+  }
 
   const loadedHistory = readJsonFile(HISTORY_FILE);
   if (loadedHistory.ok && Array.isArray(loadedHistory.value)) {
@@ -756,6 +777,7 @@ async function runScan() {
         sweepMs: sweep.responders.get(device.ip) ?? null,
         kind: classifyDevice({ hostname: device.hostname, label: device.label })?.kind || null,
         note: DEVICE_NOTES[device.ip] || null,
+        room: rooms[String(device.mac || '').toLowerCase()] || null,
         kasa: kasaByIp.get(device.ip) || null
       })),
       tookMs: Date.now() - started,
@@ -911,6 +933,7 @@ function mergedDevices() {
     });
     return {
       ...device,
+      room: rooms[String(device.mac || '').toLowerCase()] || null,
       responded: sweepResponders.has(device.ip),
       sweepMs: sweepResponders.get(device.ip) ?? null,
       lastSweepAt,
@@ -1022,6 +1045,27 @@ async function handle(req, res) {
 
   if (reqUrl.pathname === '/api/scan' && req.method === 'POST') {
     return json(res, 200, await runScan());
+  }
+
+  if (reqUrl.pathname === '/api/rooms' && req.method === 'GET') {
+    return json(res, 200, { rooms });
+  }
+
+  if (reqUrl.pathname === '/api/rooms' && req.method === 'PUT') {
+    if (req.headers['x-advisor-intent'] !== 'write') {
+      return json(res, 403, { error: 'Missing x-advisor-intent header' });
+    }
+    try {
+      const body = await readBody(req);
+      const mac = String(body.mac || '').trim().toLowerCase();
+      if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return json(res, 400, { error: 'Invalid mac' });
+      const room = cleanText(body.room, 40);
+      if (room) rooms[mac] = room; else delete rooms[mac];
+      saveRooms();
+      return json(res, 200, { ok: true, mac, room: room || null });
+    } catch (err) {
+      return json(res, err.status || 400, { error: err.message });
+    }
   }
 
   if (reqUrl.pathname === '/api/history' && req.method === 'GET') {

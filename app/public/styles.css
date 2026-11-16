@@ -62,3 +62,12 @@ body.data-stale .metric-card,body.data-stale .map-panel,body.data-stale .devices
 /* A device that did not answer the last sweep is shown, but not as if it were live. */
 .map-leaf.unresponsive{opacity:.45;border-style:dotted}
 
+
+/* Rooms: set once per device, shown on the map and the list. */
+.rooms-summary{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 9px;min-height:16px}
+.room-pill{font-size:9px;letter-spacing:.02em;padding:2px 8px;border:1px solid #2b3b47;border-radius:999px;color:#9fb3bd;white-space:nowrap}
+.room-pill b{color:var(--mint);font-weight:600;margin-left:2px}
+.room-pill.unassigned{color:#657681;border-style:dashed}
+.room-input{width:74px;font:inherit;font-size:9px;padding:3px 6px;border-radius:5px;border:1px solid #22303b;background:#0f1820;color:#c9d7dd}
+.room-input:focus{outline:none;border-color:var(--mint)}
+.room-input::placeholder{color:#4d5f6a}
