@@ -72,7 +72,7 @@ Only your own range is accepted: anything wider than `/22` is refused so a typo 
 
 ## Upstream equipment (LLDP) and powerline
 
-Both are documented in depth in [docs/powerline.md](docs/powerline.md) and, for LLDP, under *Upstream equipment* below.
+Both are documented in depth in [docs/powerline.md](docs/powerline.md); Blink hardware and why most of it cannot appear on a map is in [docs/blink.md](docs/blink.md) and, for LLDP, under *Upstream equipment* below.
 
 Managed switches and routers advertise themselves with LLDP. Capturing that needs a raw socket, which the dashboard deliberately does not have, so a small **sidecar** does it instead:
 
