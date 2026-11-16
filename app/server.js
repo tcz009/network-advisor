@@ -129,7 +129,10 @@ function parseDeviceNotes(raw) {
     if (split < 2) continue;
     const ip = trimmed.slice(0, split).trim();
     const note = trimmed.slice(split + 1).trim();
-    if (isIpv4(ip) && note) map[ip] = note.slice(0, 120);
+    // Deliberately not isIpv4(): this parses at module load, before IPV4 is
+    // initialised, so depending on it threw a TDZ error on a configured host.
+    const looksLikeIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(ip) && ip.split('.').every(part => Number(part) <= 255);
+    if (looksLikeIp && note) map[ip] = note.slice(0, 120);
   }
   return map;
 }

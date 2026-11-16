@@ -56,6 +56,31 @@ test('the hub entrypoint starts, serves, and shuts down cleanly', async () => {
   assert.equal(code, 0, 'SIGTERM should be a clean shutdown');
 });
 
+test('the hub starts with DEVICE_NOTES configured', async () => {
+  // The regression: parsing notes at module load touched a const that was not
+  // initialised yet, and only when DEVICE_NOTES was actually set.
+  const port = 20000 + Math.floor(Math.random() * 2000);
+  const child = spawn(NODE, ['server.js'], {
+    cwd: APP_DIR,
+    env: baseEnv({ PORT: String(port), BIND_HOST: '127.0.0.1', DEVICE_NOTES: '192.168.1.85=Blink hub for 10 cameras' })
+  });
+  const started = new Promise((resolve, reject) => {
+    let output = '';
+    const timer = setTimeout(() => reject(new Error(`did not start: ${output}`)), 15000);
+    child.stdout.on('data', chunk => {
+      output += String(chunk);
+      if (output.includes('listening')) { clearTimeout(timer); resolve(); }
+    });
+    child.stderr.on('data', chunk => { output += String(chunk); });
+    child.on('exit', code => { clearTimeout(timer); reject(new Error(`exited (${code}): ${output}`)); });
+  });
+  await started;
+  const state = await (await fetch(`http://127.0.0.1:${port}/api/state`, { signal: AbortSignal.timeout(8000) })).json();
+  assert.ok(Array.isArray(state.devices));
+  child.kill('SIGTERM');
+  await new Promise(resolve => child.on('exit', resolve));
+});
+
 test('agent mode refuses to start without a hub to report to', async () => {
   const child = spawn(NODE, ['server.js'], {
     cwd: APP_DIR,
