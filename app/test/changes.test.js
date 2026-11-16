@@ -58,6 +58,9 @@ test('the event log is capped', () => {
 test('Pi-hole payloads are reduced to the numbers the dashboard shows', () => {
   const summary = pihole.summariseSummary({ queries: { total: 1000, blocked: 250, percent_blocked: 25, unique_domains: 80 } });
   assert.deepEqual(summary, { queries: 1000, blocked: 250, percentBlocked: 25, uniqueDomains: 80 });
+  // Pi-hole sends a raw float; the dashboard shows one decimal.
+  const raw = pihole.summariseSummary({ queries: { total: 117479, blocked: 12393, percent_blocked: 10.549118995666504 } });
+  assert.equal(raw.percentBlocked, 10.5);
   const top = pihole.summariseTopDomains({ domains: [{ domain: 'ads.example', count: 12 }, { domain: 'tracker.example', count: 7 }] });
   assert.equal(top[0].domain, 'ads.example');
   assert.equal(top[1].count, 7);

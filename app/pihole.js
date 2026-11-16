@@ -71,6 +71,10 @@ async function apiGet(path, sid) {
 }
 
 // Shapes the Pi-hole payload into the few numbers the dashboard shows.
+function round1(value) {
+  return Math.round((Number(value) || 0) * 10) / 10;
+}
+
 function summariseSummary(payload) {
   const summary = (payload && payload.queries) || {};
   const total = Number(summary.total) || 0;
@@ -78,7 +82,8 @@ function summariseSummary(payload) {
   return {
     queries: total,
     blocked,
-    percentBlocked: Number(summary.percent_blocked) || (total ? Math.round((blocked / total) * 1000) / 10 : 0),
+    // Always one decimal: Pi-hole returns a raw float (10.549118995666504).
+    percentBlocked: round1(Number(summary.percent_blocked) || (total ? (blocked / total) * 100 : 0)),
     uniqueDomains: Number(summary.unique_domains) || 0
   };
 }
