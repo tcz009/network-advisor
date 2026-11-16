@@ -64,6 +64,26 @@ test('loadState survives a completely unreadable state directory', () => {
   assert.doesNotThrow(() => advisor.loadState());
 });
 
+test('a saved scan snapshot restores device identity after a restart', () => {
+  // Without this, every device type and broadcast identity vanished on restart
+  // until someone ran another sweep.
+  const snapshot = {
+    finishedAt: Date.now(),
+    arp: [{
+      ip: '192.168.1.109', mac: 'dc:71:44:1c:41:47', label: 'Samsung', hostname: null,
+      kind: 'TV', room: null, responded: true, sweepMs: 21.5,
+      kasa: null, mdns: null, upnp: { server: 'SHP, UPnP/1.0, Samsung UPnP SDK/1.0', serviceTypes: ['MediaRenderer'] }
+    }]
+  };
+  advisor.writeJsonAtomic(path.join(DATA_DIR, 'lastscan.json'), snapshot);
+  advisor.loadState();
+
+  const device = advisor.mergedDevices().find(entry => entry.ip === '192.168.1.109');
+  assert.ok(device, 'the saved device should come back');
+  assert.equal(device.kind, 'TV');
+  assert.equal(device.upnp.server.includes('Samsung'), true);
+});
+
 test('trimAgents drops stale sensors and caps the map', () => {
   const now = Date.now();
   const day = 24 * 60 * 60_000;

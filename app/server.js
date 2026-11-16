@@ -23,6 +23,7 @@ const DATA_FILE = path.join(DATA_DIR, 'nodes.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 const AGENTS_FILE = path.join(DATA_DIR, 'agents.json');
 const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
+const SCAN_FILE = path.join(DATA_DIR, 'lastscan.json');
 const TARGET = process.env.CHECK_TARGET || '1.1.1.1';
 const HOSTNAME = process.env.CHECK_HOSTNAME || 'cloudflare.com';
 // Active discovery is opt-in: with SCAN_SUBNET unset the app stays passive and
@@ -644,6 +645,21 @@ function loadState() {
     }
   }
 
+  const loadedScan = readJsonFile(SCAN_FILE);
+  if (loadedScan.ok && loadedScan.value && Array.isArray(loadedScan.value.arp)) {
+    lastScan = { enabled: true, finishedAt: Number(loadedScan.value.finishedAt) || 0, arp: loadedScan.value.arp };
+    lastScanStartedAt = lastScan.finishedAt;
+    for (const device of lastScan.arp) {
+      if (!device || !device.ip) continue;
+      if (device.kasa) kasaByIp.set(device.ip, device.kasa);
+      if (device.mdns || device.upnp) {
+        discoveryByIp.set(device.ip, { ip: device.ip, mdns: device.mdns || null, upnp: device.upnp || null });
+      }
+      if (typeof device.sweepMs === 'number') sweepResponders.set(device.ip, device.sweepMs);
+    }
+    lastSweepAt = lastScan.finishedAt;
+  }
+
   const loadedHistory = readJsonFile(HISTORY_FILE);
   if (loadedHistory.ok && Array.isArray(loadedHistory.value)) {
     history = loadedHistory.value
@@ -843,6 +859,13 @@ async function runScan() {
       tookMs: Date.now() - started,
       finishedAt: Date.now()
     };
+    // Keep the annotated result on disk: without it a restart loses every
+    // device type and broadcast identity until the next sweep.
+    try {
+      writeJsonAtomic(SCAN_FILE, { finishedAt: lastScan.finishedAt, arp: lastScan.arp });
+    } catch (err) {
+      console.error('Could not save the scan snapshot:', err.message);
+    }
     return lastScan;
   })();
   return scanInFlight.finally(() => { scanInFlight = null; });
