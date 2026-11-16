@@ -85,6 +85,7 @@ const VENDORS = {
   'A4:2B:B0': 'TP-Link',
   'C0:4A:00': 'TP-Link',
   '14:CC:20': 'TP-Link',
+  'B0:BE:76': 'TP-Link',   // confirmed by an HS100 plug on the LAN
   '24:5A:4C': 'Ubiquiti',
   '44:D9:E7': 'Ubiquiti',
   '68:D7:9A': 'Ubiquiti',

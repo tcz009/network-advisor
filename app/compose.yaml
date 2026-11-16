@@ -21,6 +21,8 @@ services:
       # DNS names the dashboard may answer on. IP literals and localhost are
       # always accepted; this exists to defeat DNS rebinding.
       ALLOWED_HOSTS: "${ALLOWED_HOSTS:-}"
+      # Probe TCP 9999 for TP-Link Kasa plugs during a sweep. false = ICMP only.
+      KASA_PROBE: "${KASA_PROBE:-true}"
     cap_drop:
       - ALL
     cap_add:

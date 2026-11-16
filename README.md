@@ -70,6 +70,8 @@ or put `SCAN_SUBNET=192.168.1.0/24` in a `.env` file beside `compose.yaml`. When
 
 Only your own range is accepted: anything wider than `/22` is refused so a typo cannot turn into a large ICMP blast. Sweeping an address range you do not own is not a good idea, and some devices treat it as hostile.
 
+A sweep also marks each known device as having answered or not, and (unless `KASA_PROBE=false`) probes TCP 9999 on the responders and on any address it cannot name. That is how a TP-Link Kasa plug appears even though it ignores ping: a reply on the Kasa port is reported as confirmed, a bare open port as unconfirmed, and the plug's own alias or model is used as its name. Devices that did not answer are still listed, dimmed and marked "not responding", so a stale neighbour entry is not mistaken for live equipment.
+
 ## Add sensors on other hosts (agent mode)
 
 The dashboard reads `/proc/net/route` and `/proc/net/arp` from the host it runs on, so a second copy of the app elsewhere is just a second dashboard. To get one combined picture, run an **agent** on the other host instead. It pushes its own gateway, pings, load, and neighbour list to the hub and never opens a port.
@@ -202,6 +204,7 @@ Hub defaults come from `app/compose.yaml`; the agent and interval defaults come 
 | `AGENT_INTERVAL_MS` | `30000` | How often an agent reports in (minimum 15000) |
 | `AGENT_TOKENS` | unset | `Name=token,Name=token`; binds a token to a sensor so one leak cannot rewrite the others |
 | `ALLOWED_HOSTS` | unset | DNS names the dashboard may answer on. IP literals and `localhost` are always allowed; anything else is refused with `421` |
+| `KASA_PROBE` | `true` | During a sweep, probe TCP 9999 so TP-Link Kasa plugs are found even when they ignore ICMP |
 
 ## Privacy and security
 
@@ -229,6 +232,8 @@ Agents send their host's gateway, load average, ping results, and neighbour tabl
 - **Router or internet times look worse than they are:** check the load figure in the findings panel. A NAS running a heavy job reports inflated ping times; re-run a check when it is idle.
 - **A sensor never appears:** confirm `AGENT_TOKEN` (or the sensor's entry in `AGENT_TOKENS`) matches on both ends, that `POST /api/agents/report` returns something other than `403`, and read `journalctl -u network-advisor-agent`. Visit `/api/agents` on the hub to see whether intake is enabled at all.
 - **A device shows the wrong vendor:** the MAC prefixes come from a small curated table in `app/oui.js`, not the full IEEE registry. Add the prefix there if you want it named.
+- **A device says "not responding to the last sweep":** the NAS has a neighbour entry but the address did not answer ICMP during the most recent sweep. It is usually unplugged or asleep; run a check when it should be on.
+- **A plug is missing entirely:** run a sweep with it powered. If it still does not appear, it is either on another subnet (put a sensor there) or not reachable from the NAS at all. The sweep reports how many of the probed addresses answered.
 - **A device is labelled "Randomised MAC":** phones and some laptops rotate their MAC per network by design, so the vendor cannot be looked up.
 
 ## Project layout

@@ -58,3 +58,6 @@ button,input,select{font:inherit}button:focus-visible,input:focus-visible,select
 /* Stale data must not look live. */
 body.data-stale .metric-card,body.data-stale .map-panel,body.data-stale .devices-panel,body.data-stale .agents-panel,body.data-stale .seen-panel{opacity:.55}
 @media (pointer:coarse){.row-delete{width:44px;height:44px;font-size:16px}.row-actions{width:52px}}
+
+/* A device that did not answer the last sweep is shown, but not as if it were live. */
+.map-leaf.unresponsive{opacity:.45;border-style:dotted}

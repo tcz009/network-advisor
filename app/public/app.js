@@ -192,8 +192,20 @@ function mapLeaves(data) {
   const entries = (data.devices || [])
     .filter(device => !known.has(device.ip))
     .map(device => {
-      const vendor = device.label && device.label !== 'Randomised MAC' ? device.label : null;
-      return { ip: device.ip, vendor, name: device.hostname || vendor || null, seenBy: device.seenBy || [] };
+      // A confirmed Kasa device knows its own name; that beats any vendor guess.
+      const kasa = device.kasa || null;
+      const kasaName = kasa
+        ? (kasa.alias || kasa.model || (kasa.confirmed ? 'Kasa device' : 'Port 9999 open'))
+        : null;
+      const vendor = kasaName || (device.label && device.label !== 'Randomised MAC' ? device.label : null);
+      return {
+        ip: device.ip,
+        vendor,
+        name: device.hostname || vendor || null,
+        seenBy: device.seenBy || [],
+        unresponsive: device.responded === false,
+        kasa: Boolean(kasa && kasa.confirmed)
+      };
     });
 
   // mDNS names carry the router's domain; the first label is what a person says.
@@ -208,8 +220,14 @@ function mapLeaves(data) {
     name: shortLabel(entry.name),
     online: true,
     measured: false,
-    title: `${entry.ip}${entry.vendor && entry.vendor !== entry.name ? ` · ${entry.vendor}` : ''}${entry.seenBy.length > 1 ? ` · seen by ${entry.seenBy.length} hosts` : ''}`,
-    lines: [entry.ip]
+    unresponsive: entry.unresponsive,
+    title: [
+      entry.ip,
+      entry.vendor && entry.vendor !== entry.name ? entry.vendor : null,
+      entry.seenBy.length > 1 ? `seen by ${entry.seenBy.length} hosts` : null,
+      entry.unresponsive ? 'did not answer the last sweep' : null
+    ].filter(Boolean).join(' · '),
+    lines: [entry.ip, entry.unresponsive ? 'not responding' : ''].filter(Boolean)
   }));
 
   const unnamed = entries.filter(entry => !entry.name);
@@ -333,7 +351,7 @@ function renderMap(data) {
   const hidden = leaves.length - shown.length;
 
   $('map-leaves').innerHTML = shown.map(leaf => `
-    <div class="map-leaf ${leaf.kind}${leaf.online ? '' : ' offline'}" data-measured="${leaf.measured ? '1' : '0'}">
+    <div class="map-leaf ${leaf.kind}${leaf.online ? '' : ' offline'}${leaf.unresponsive ? ' unresponsive' : ''}" data-measured="${leaf.measured ? '1' : '0'}">
       <span class="leaf-icon">${leaf.kind === 'sensor' ? '◈' : leaf.kind === 'browser' ? '▯' : '·'}</span>
       <span class="leaf-name" title="${escapeHtml(leaf.title || leaf.name)}">${escapeHtml(leaf.name)}</span>
       ${leaf.lines.map(line => `<span class="leaf-sub">${escapeHtml(line)}</span>`).join('')}
@@ -359,7 +377,8 @@ function renderArp(devices) {
     const vendor = item.hostname && item.label ? item.label : null;
     const seenBy = Array.isArray(item.seenBy) && item.seenBy.length > 1
       ? `seen by ${item.seenBy.join(' + ')}` : '';
-    const secondary = [vendor, seenBy].filter(Boolean).join(' · ');
+    const liveness = item.responded === false ? 'not responding to the last sweep' : '';
+    const secondary = [vendor, seenBy, liveness].filter(Boolean).join(' · ');
     return `<div class="arp-row"><span>${escapeHtml(title)}</span><code>${escapeHtml(detail)}</code>${secondary ? `<small class="table-secondary">${escapeHtml(secondary)}</small>` : ''}</div>`;
   }).join('') : '<p class="muted-copy">No recent neighbour entries. Devices appear here after the NAS has communicated with them.</p>';
 }

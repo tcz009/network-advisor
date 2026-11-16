@@ -9,6 +9,7 @@ const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { describeMac } = require('./oui');
+const { discoverKasa } = require('./kasa');
 
 const exec = promisify(execFile);
 
@@ -24,6 +25,9 @@ const HOSTNAME = process.env.CHECK_HOSTNAME || 'cloudflare.com';
 // only reports what the NAS has recently talked to.
 const SCAN_SUBNET = process.env.SCAN_SUBNET || '';
 const SCAN_MIN_INTERVAL_MS = 30_000;
+// Kasa plugs answer on TCP 9999 even when they ignore ICMP, so a sweep probes it.
+// Set KASA_PROBE=false to leave the scan to ICMP only.
+const KASA_PROBE = String(process.env.KASA_PROBE || 'true').toLowerCase() !== 'false';
 
 // Host header validation exists to defeat DNS rebinding: an attacker page whose
 // hostname resolves to this NAS sends its own hostname in Host, which is exactly
@@ -71,6 +75,9 @@ let history = [];
 let lastCheck = null;
 let lastScan = null;
 let lastScanStartedAt = 0;
+let kasaByIp = new Map();
+let sweepResponders = new Set();
+let lastSweepAt = 0;
 let scanInFlight = null;
 let checkInFlight = null;
 let saveTimer = null;
@@ -442,14 +449,14 @@ async function enrichDevices(devices) {
 
 async function pingSweep(hosts, concurrency = 32) {
   let cursor = 0;
-  let answered = 0;
   let fatal = null;
+  const responders = new Set();
   const worker = async () => {
     while (cursor < hosts.length) {
       const host = hosts[cursor++];
       try {
         await exec('ping', ['-c', '1', '-W', '1', host], { timeout: 1500 });
-        answered++;
+        responders.add(host);
       } catch (err) {
         // No reply is the normal case. A missing or unusable binary is not,
         // and used to be reported as "the subnet is empty".
@@ -461,7 +468,7 @@ async function pingSweep(hosts, concurrency = 32) {
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, hosts.length) }, worker));
-  return { answered, error: fatal };
+  return { answered: responders.size, responders, error: fatal };
 }
 
 /* ------------------------------------------------------------------ storage */
@@ -695,6 +702,22 @@ async function runScan() {
     const sweep = await pingSweep(parsed.hosts);
     const gateway = readGateway();
     const devices = await enrichDevices(neighbourDevices(readArpTable(), gateway?.iface));
+
+    // Probe the Kasa port on anything that answered, plus anything the neighbour
+    // table knows about but cannot name — that is where plugs hide.
+    let kasa = [];
+    if (KASA_PROBE) {
+      const named = new Set(devices.filter(device => device.label || device.hostname).map(device => device.ip));
+      const targets = [...new Set([
+        ...sweep.responders,
+        ...devices.filter(device => !named.has(device.ip)).map(device => device.ip)
+      ])].slice(0, 512);
+      kasa = await discoverKasa(targets);
+      for (const entry of kasa) kasaByIp.set(entry.ip, entry);
+    }
+
+    sweepResponders = sweep.responders;
+    lastSweepAt = Date.now();
     lastScanStartedAt = Date.now();   // the pause counts from the end of a sweep
     lastScan = {
       enabled: true,
@@ -703,7 +726,12 @@ async function runScan() {
       probed: parsed.hosts.length,
       answered: sweep.answered,
       devices: devices.length,
-      arp: devices,
+      kasa,
+      arp: devices.map(device => ({
+        ...device,
+        responded: sweep.responders.has(device.ip),
+        kasa: kasaByIp.get(device.ip) || null
+      })),
       tookMs: Date.now() - started,
       finishedAt: Date.now()
     };
@@ -841,7 +869,14 @@ function mergeDevices(nasDevices, agentMap, { now = Date.now(), ttlMs = AGENT_DE
 }
 
 function mergedDevices() {
-  return mergeDevices(lastCheck?.arp, agents);
+  const merged = mergeDevices(lastCheck?.arp, agents);
+  if (!sweepResponders.size) return merged;
+  return merged.map(device => ({
+    ...device,
+    responded: sweepResponders.has(device.ip),
+    lastSweepAt,
+    kasa: kasaByIp.get(device.ip) || null
+  }));
 }
 
 async function startAgent() {
