@@ -206,6 +206,7 @@ function mapLeaves(data) {
         seenBy: device.seenBy || [],
         unresponsive: device.responded === false,
         kind: device.kind || null,
+        note: device.note || null,
         latency,
         kasa: Boolean(kasa && kasa.confirmed)
       };
@@ -228,12 +229,14 @@ function mapLeaves(data) {
       entry.ip,
       entry.kind,
       entry.vendor && entry.vendor !== entry.name ? entry.vendor : null,
+      entry.note,
       entry.seenBy.length > 1 ? `seen by ${entry.seenBy.length} hosts` : null,
       entry.unresponsive ? 'did not answer the last sweep' : null
     ].filter(Boolean).join(' · '),
     lines: [
       entry.ip,
-      entry.unresponsive ? 'not responding' : [entry.kind, entry.latency].filter(Boolean).join(' · ')
+      entry.unresponsive ? 'not responding' : [entry.kind, entry.latency].filter(Boolean).join(' · '),
+      entry.note
     ].filter(Boolean)
   }));
 
@@ -386,7 +389,7 @@ function renderArp(devices) {
       ? `seen by ${item.seenBy.join(' + ')}` : '';
     const liveness = item.responded === false ? 'not responding to the last sweep' : '';
     const latency = typeof item.sweepMs === 'number' ? fmtMs(item.sweepMs) : '';
-    const secondary = [item.kind, vendor, latency, seenBy, liveness].filter(Boolean).join(' · ');
+    const secondary = [item.kind, vendor, latency, item.note, seenBy, liveness].filter(Boolean).join(' · ');
     return `<div class="arp-row"><span>${escapeHtml(title)}</span><code>${escapeHtml(detail)}</code>${secondary ? `<small class="table-secondary">${escapeHtml(secondary)}</small>` : ''}</div>`;
   }).join('') : '<p class="muted-copy">No recent neighbour entries. Devices appear here after the NAS has communicated with them.</p>';
 }

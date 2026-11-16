@@ -36,3 +36,18 @@ test('unknown devices stay unknown instead of being guessed', () => {
   // A generic vendor label must not imply a device type.
   assert.equal(classifyDevice({ label: 'TP-Link' }), null);
 });
+
+const advisorForNotes = require('../server.js');
+
+test('device notes parse into an address-keyed map', () => {
+  const notes = advisorForNotes.parseDeviceNotes(
+    '192.168.1.85=Blink hub for 10 cameras; 192.168.1.113=Mini at the front door;'
+  );
+  assert.equal(notes['192.168.1.85'], 'Blink hub for 10 cameras');
+  assert.equal(notes['192.168.1.113'], 'Mini at the front door');
+});
+
+test('malformed device notes are ignored, not guessed at', () => {
+  const notes = advisorForNotes.parseDeviceNotes('nonsense;192.168.1.9=; =no ip;999.1.1.1=x');
+  assert.deepEqual(Object.keys(notes), []);
+});

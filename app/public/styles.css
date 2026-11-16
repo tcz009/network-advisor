@@ -61,3 +61,4 @@ body.data-stale .metric-card,body.data-stale .map-panel,body.data-stale .devices
 
 /* A device that did not answer the last sweep is shown, but not as if it were live. */
 .map-leaf.unresponsive{opacity:.45;border-style:dotted}
+

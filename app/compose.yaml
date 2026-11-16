@@ -23,6 +23,9 @@ services:
       ALLOWED_HOSTS: "${ALLOWED_HOSTS:-}"
       # Probe TCP 9999 for TP-Link Kasa plugs during a sweep. false = ICMP only.
       KASA_PROBE: "${KASA_PROBE:-true}"
+      # Notes for things the network cannot know, e.g.
+      # 192.168.1.85=Blink hub for 10 cameras (3 offline)
+      DEVICE_NOTES: "${DEVICE_NOTES:-}"
     cap_drop:
       - ALL
     cap_add:

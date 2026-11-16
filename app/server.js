@@ -34,6 +34,10 @@ const KASA_PROBE = String(process.env.KASA_PROBE || 'true').toLowerCase() !== 'f
 // hostname resolves to this NAS sends its own hostname in Host, which is exactly
 // what the Origin check cannot detect. IP literals and localhost are always fine;
 // add any DNS names you actually use here.
+// Operator notes for things the network cannot know: which hosts a hub serves,
+// what a device physically is. Format: ip=note;ip=note
+const DEVICE_NOTES = parseDeviceNotes(process.env.DEVICE_NOTES || '');
+
 const ALLOWED_HOSTS = String(process.env.ALLOWED_HOSTS || '')
   .split(',')
   .map(host => host.trim().toLowerCase())
@@ -114,6 +118,20 @@ function hostAllowed(hostHeader) {
 // config matches the "Media-Pi" that arrives on the wire.
 function sanitiseAgentName(value) {
   return cleanText(value, 40).replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function parseDeviceNotes(raw) {
+  const map = Object.create(null);
+  for (const part of String(raw || '').split(';')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const split = trimmed.indexOf('=');
+    if (split < 2) continue;
+    const ip = trimmed.slice(0, split).trim();
+    const note = trimmed.slice(split + 1).trim();
+    if (isIpv4(ip) && note) map[ip] = note.slice(0, 120);
+  }
+  return map;
 }
 
 function parseAgentTokens(raw) {
@@ -734,6 +752,7 @@ async function runScan() {
         responded: sweep.responders.has(device.ip),
         sweepMs: sweep.responders.get(device.ip) ?? null,
         kind: classifyDevice({ hostname: device.hostname, label: device.label })?.kind || null,
+        note: DEVICE_NOTES[device.ip] || null,
         kasa: kasaByIp.get(device.ip) || null
       })),
       tookMs: Date.now() - started,
@@ -893,6 +912,7 @@ function mergedDevices() {
       sweepMs: sweepResponders.get(device.ip) ?? null,
       lastSweepAt,
       kasa,
+      note: DEVICE_NOTES[device.ip] || device.note || null,
       kind: classified ? classified.kind : null,
       kindEvidence: classified ? classified.evidence : null
     };
@@ -1226,6 +1246,7 @@ module.exports = {
   writeJsonAtomic,
   readJsonFile,
   hostAllowed,
+  parseDeviceNotes,
   parseAgentTokens,
   isContainerInterface,
   cleanText,
