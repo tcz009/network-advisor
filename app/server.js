@@ -1188,6 +1188,8 @@ function annotateDevices(devices, {
       annotated.responded = responders.has(device.ip);
       annotated.sweepMs = responders.get(device.ip) ?? null;
       annotated.lastSweepAt = sweepAt;
+      const series = latencyHistory.get(String(device.mac || device.ip)) || [];
+      annotated.trend = series.slice(-LATENCY_PUBLISHED).map(point => point.ms);
     }
     return annotated;
   });
