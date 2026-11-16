@@ -28,3 +28,21 @@ jobs:
         run: npm test
       - name: Build the image
         run: docker build -t network-advisor:ci app
+      - name: Run the image and hit it
+        run: |
+          docker run -d --name na-ci -p 18090:8090 network-advisor:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18090/api/pulse >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18090/api/pulse
+          curl -fsS http://127.0.0.1:18090/api/state | head -c 300
+          docker logs na-ci
+          docker rm -f na-ci
+      - name: Agent mode refuses to start without a hub
+        run: |
+          if docker run --rm -e ROLE=agent network-advisor:ci; then
+            echo "agent mode should have refused to start" >&2
+            exit 1
+          fi
+          echo "agent mode refused as expected"

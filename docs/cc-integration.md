@@ -4,8 +4,8 @@
 Network Advisor (NA) lives in this repository and is maintained separately; the CC
 owner implements any integration on their side.
 
-Written against NA `0.2.0`, merged to `main` as `93f602f` (PR #1). Point CC at `main`
-rather than a branch.
+Written against NA `0.2.0` on `main` (the version bump landed in `0f052b1`; the
+integration work merged as `93f602f`). Point CC at `main` rather than a branch.
 
 ---
 
@@ -30,7 +30,7 @@ CC runs host-networked on the same NAS, so loopback is enough:
 GET http://127.0.0.1:8090/api/state
 ```
 
-Other routes, all read-only GET except where noted:
+Route methods matter — the table below marks the ones that change state:
 
 | Route | Purpose |
 |---|---|
@@ -39,6 +39,10 @@ Other routes, all read-only GET except where noted:
 | `/api/history` | Rolling check records (max 288) |
 | `/api/pulse` | `{"at": <epoch ms>}` — cheap liveness probe, no side effects |
 | `/api/scan` | `POST`, active ICMP sweep of `SCAN_SUBNET` if enabled; returns 200 with `enabled:false` when off |
+| `/api/check` | `POST`, runs a check and returns it |
+| `/api/nodes` | `POST`, registers a browser device |
+| `/api/nodes/<id>` | `DELETE`, requires an `x-advisor-intent: delete` header |
+| `/api/agents/report` | `POST`, agent intake, token required |
 
 Recommended for a collector: `/api/state`, polled every 60 s, 5 s timeout.
 
@@ -117,7 +121,8 @@ omitted, but nested values may be `null`.
       "speedCheckedAt": null, "firstSeen": "2026-11-16T00:31:32.885Z", "online": false }
   ],
 
-  "history": [                             // newest last, capped at 288
+  "history": [                             // newest last; /api/state returns the last 60
+                                            // (GET /api/history has up to 288)
     { "at": "2026-11-16T08:37:59.334Z", "routerMs": 8.058, "routerLoss": 0,
       "internetMs": 10.534, "internetLoss": 0, "dnsOk": true, "load1": 2.29, "devices": 24 }
   ],

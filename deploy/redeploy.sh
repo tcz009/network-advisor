@@ -125,6 +125,7 @@ EOS
 install_vpngate_agent() {
   log "vpngate ($VPNGATE_HOST, rootless)"
   scp -q "${SSH_OPTS[@]}" -i "$PI_KEYS" "$BUNDLE" "pi@$VPNGATE_HOST:/tmp/na-app.tar.gz"
+  scp -q "${SSH_OPTS[@]}" -i "$PI_KEYS" "$REPO/deploy/run-agent.sh" "pi@$VPNGATE_HOST:/tmp/na-run.sh"
   ssh "${SSH_OPTS[@]}" -i "$PI_KEYS" "pi@$VPNGATE_HOST" 'bash -s' <<EOS
 set -euo pipefail
 stage="$VPNGATE_DIR.new"
@@ -132,8 +133,7 @@ rm -rf "\$stage"
 mkdir -p "\$stage"
 tar -xzf /tmp/na-app.tar.gz -C "\$stage" --strip-components=1
 /home/pi/.local/node/bin/node --check "\$stage/server.js"
-cp "$VPNGATE_DIR/run.sh" "\$stage/run.sh"
-chmod 700 "\$stage/run.sh"
+install -m 700 /tmp/na-run.sh "\$stage/run.sh"
 rm -rf "$VPNGATE_DIR.prev"
 mv "$VPNGATE_DIR" "$VPNGATE_DIR.prev"
 mv "\$stage" "$VPNGATE_DIR"

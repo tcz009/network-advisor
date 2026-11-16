@@ -106,12 +106,20 @@ The dashboard reads `/proc/net/route` and `/proc/net/arp` from the host it runs 
 If a host has no passwordless sudo — a VPN router, for example — agent mode also runs as an ordinary user: unpack Node under your home directory, start the same `server.js` with `ROLE=agent`, and keep it alive from cron with one line:
 
 ```sh
+install -m 700 deploy/run-agent.sh /home/pi/network-advisor-agent/run.sh
+```
+
+then, in `crontab -e`:
+
+```sh
 * * * * * pgrep -f "network-advisor-agent/server.js" >/dev/null 2>&1 || nohup /home/pi/network-advisor-agent/run.sh >> /home/pi/network-advisor-agent/agent.log 2>&1
 ```
 
+`run-agent.sh` sources `~/.config/network-advisor-agent.env` (mode 600), and the agent reports every 30 s without opening a port.
+
 That needs no root and touches no system files, which is often the better trade on a host whose job is routing. It does mean `ping` must be allowed to use an ICMP datagram socket: check `sysctl net.ipv4.ping_group_range` includes your user's group, otherwise the sensor reports devices and load but no timings.
 
-A working agent logs `[agent] reported N devices to …` within a few seconds. The dashboard's **Sensors on the LAN** panel lists every agent, and the device list marks which hosts saw each address. A sensor that has not reported for ten minutes keeps its row, marked offline, but stops contributing devices — so a retired Pi cannot leave phantom "seen by" tags behind.
+A working agent logs `[agent] reported N devices to …` within a few seconds. The dashboard's **Sensors on the LAN** panel lists every agent, and the device list marks which hosts saw each address. A sensor is shown offline as soon as it has not reported for 90 seconds, and after ten minutes it stops contributing devices — so a retired Pi cannot leave phantom "seen by" tags behind. The row itself is kept for seven days, then pruned.
 
 Agents are optional and independent: the hub works fine with none, and an agent that cannot reach the hub just logs a failure and retries every 30 seconds. Set `AGENT_INTERVAL_MS` to change that interval.
 
@@ -138,6 +146,24 @@ docker compose down
 
 Device labels and measurements are stored in the named Docker volume `network-advisor-data` (Compose may prefix the volume with the project name). Back it up with your normal Docker/OMV backup process. **Do not use `docker compose down -v` unless you intend to delete that stored data.**
 
+## Endpoints
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/api/state` | GET | Everything: check, agents, merged devices, browser nodes, history (last 60), scan config |
+| `/api/check` | POST | Run a check now and return it |
+| `/api/scan` | POST | Sweep `SCAN_SUBNET` (no-op returning `enabled:false` when unset) |
+| `/api/history` | GET | Full check history (max 288 records) |
+| `/api/agents` | GET | Sensors and their payloads |
+| `/api/agents/report` | POST | Agent intake; requires `AGENT_TOKEN` or `AGENT_TOKENS` |
+| `/api/nodes` | POST | Register or update this browser as a device |
+| `/api/nodes/<id>` | DELETE | Forget a device (requires `x-advisor-intent: delete`) |
+| `/api/speed/download` | GET | Transfer a fixed-size body for the local speed test |
+| `/api/speed/upload` | POST | Receive up to 2 MiB for the local speed test |
+| `/api/pulse` | GET | Liveness only; no side effects |
+
+A full client contract for another dashboard lives in [`docs/cc-integration.md`](docs/cc-integration.md).
+
 ## Deploying, and rolling back
 
 `deploy/redeploy.sh` (run on the NAS) is the supported path. It resolves a branch or commit, builds the hub tagged with the short SHA, ships the matching bundle to each Pi, stages and health-checks each swap, and prints the fleet it sees at the end. Any failed step exits non-zero.
@@ -160,7 +186,7 @@ docker run --rm -v network-advisor_network-advisor-data:/from -v network-advisor
 
 ## Configuration
 
-The defaults are in `app/compose.yaml`:
+Hub defaults come from `app/compose.yaml`; the agent and interval defaults come from `server.js`:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
@@ -201,7 +227,7 @@ Agents send their host's gateway, load average, ping results, and neighbour tabl
 - **Every timing is empty:** the container or agent cannot do ICMP. The hub runs a ping self-test at startup and logs `ping self-test failed`; check `net.ipv4.ping_group_range` on the host, and that `iputils` is installed.
 - **The dashboard returns 421 for its own address:** you reached it by DNS name. Add that name to `ALLOWED_HOSTS`, or use the IP.
 - **Router or internet times look worse than they are:** check the load figure in the findings panel. A NAS running a heavy job reports inflated ping times; re-run a check when it is idle.
-- **A sensor never appears:** confirm `AGENT_TOKEN` matches on both ends, that the hub returns something other than `403` from `/api/agents`, and read `journalctl -u network-advisor-agent`. Visit `/api/agents` on the hub to see whether intake is enabled at all.
+- **A sensor never appears:** confirm `AGENT_TOKEN` (or the sensor's entry in `AGENT_TOKENS`) matches on both ends, that `POST /api/agents/report` returns something other than `403`, and read `journalctl -u network-advisor-agent`. Visit `/api/agents` on the hub to see whether intake is enabled at all.
 - **A device shows the wrong vendor:** the MAC prefixes come from a small curated table in `app/oui.js`, not the full IEEE registry. Add the prefix there if you want it named.
 - **A device is labelled "Randomised MAC":** phones and some laptops rotate their MAC per network by design, so the vendor cannot be looked up.
 
@@ -217,7 +243,7 @@ app/
   test/             node:test unit and HTTP tests
 deploy/
   network-advisor-agent.service   systemd unit for agent mode
-.github/workflows/ci.yml          Tests and image build on every push
+.github/workflows/ci.yml          Tests, image build and a container smoke test on pushes to `main` and on every pull request
 ```
 
 ## Development

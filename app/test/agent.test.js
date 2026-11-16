@@ -6,6 +6,8 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 
+process.env.CHECK_TARGET = '127.0.0.1';
+process.env.CHECK_HOSTNAME = 'localhost';
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'na-agent-test-'));
 process.env.AGENT_TOKEN = 'test-token-123';
 

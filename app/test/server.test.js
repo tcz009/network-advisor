@@ -7,6 +7,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // Point storage at a scratch directory before the module reads its config.
+process.env.CHECK_TARGET = '127.0.0.1';
+process.env.CHECK_HOSTNAME = 'localhost';
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'na-test-'));
 
 const advisor = require('../server.js');
@@ -388,6 +390,35 @@ test('HTTP endpoints behave under attack and normal use', async t => {
       headers: { 'x-advisor-intent': 'delete' }
     });
     assert.equal(allowed.status, 200);
+  });
+
+  await t.test('agent intake reports itself disabled when no token is configured', async () => {
+    const status = await new Promise((resolve, reject) => {
+      const body = JSON.stringify({ name: 'MediaPi' });
+      const req = require('node:http').request(
+        { host: '127.0.0.1', port: server.address().port, path: '/api/agents/report', method: 'POST',
+          headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } },
+        res => { res.resume(); resolve(res.statusCode); }
+      );
+      req.on('error', reject);
+      req.end(body);
+    });
+    assert.equal(status, 403);
+  });
+
+  await t.test('the upload route measures a body and refuses an oversized one', async () => {
+    const ok = await fetch(`${base}/api/speed/upload`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: Buffer.alloc(4096) });
+    assert.equal(ok.status, 200);
+    assert.equal((await ok.json()).bytes, 4096);
+
+    const tooBig = await fetch(`${base}/api/speed/upload`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: Buffer.alloc(3 * 1024 * 1024) });
+    assert.equal(tooBig.status, 413);
+  });
+
+  await t.test('unknown paths are a JSON 404, not a stack trace', async () => {
+    const response = await fetch(`${base}/api/nope`);
+    assert.equal(response.status, 404);
+    assert.equal((await response.json()).error, 'Not found');
   });
 
   await t.test('history endpoint answers with an array', async () => {

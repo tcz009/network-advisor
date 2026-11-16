@@ -425,17 +425,25 @@ async function enrichDevices(devices) {
 async function pingSweep(hosts, concurrency = 32) {
   let cursor = 0;
   let answered = 0;
+  let fatal = null;
   const worker = async () => {
     while (cursor < hosts.length) {
       const host = hosts[cursor++];
       try {
         await exec('ping', ['-c', '1', '-W', '1', host], { timeout: 1500 });
         answered++;
-      } catch { /* no reply: that is the normal case for an unused address */ }
+      } catch (err) {
+        // No reply is the normal case. A missing or unusable binary is not,
+        // and used to be reported as "the subnet is empty".
+        if (err.code === 'ENOENT' || err.code === 'EACCES') {
+          fatal = `ping unavailable (${err.code})`;
+          return;
+        }
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, hosts.length) }, worker));
-  return answered;
+  return { answered, error: fatal };
 }
 
 /* ------------------------------------------------------------------ storage */
@@ -666,14 +674,15 @@ async function runScan() {
   const started = Date.now();
   lastScanStartedAt = started;
   scanInFlight = (async () => {
-    const answered = await pingSweep(parsed.hosts);
+    const sweep = await pingSweep(parsed.hosts);
     const gateway = readGateway();
     const devices = await enrichDevices(neighbourDevices(readArpTable(), gateway?.iface));
     lastScan = {
       enabled: true,
+      error: sweep.error,
       subnet: `${parsed.network}/${parsed.prefix}`,
       probed: parsed.hosts.length,
-      answered,
+      answered: sweep.answered,
       devices: devices.length,
       arp: devices,
       tookMs: Date.now() - started,

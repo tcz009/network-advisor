@@ -8,6 +8,8 @@ const path = require('node:path');
 
 // Its own data directory and process, so loadState() cannot disturb other suites.
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'na-storage-test-'));
+process.env.CHECK_TARGET = '127.0.0.1';
+process.env.CHECK_HOSTNAME = 'localhost';
 process.env.DATA_DIR = DATA_DIR;
 
 const advisor = require('../server.js');
