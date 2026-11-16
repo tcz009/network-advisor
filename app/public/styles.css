@@ -71,3 +71,8 @@ body.data-stale .metric-card,body.data-stale .map-panel,body.data-stale .devices
 .room-input{width:74px;font:inherit;font-size:9px;padding:3px 6px;border-radius:5px;border:1px solid #22303b;background:#0f1820;color:#c9d7dd}
 .room-input:focus{outline:none;border-color:var(--mint)}
 .room-input::placeholder{color:#4d5f6a}
+
+/* Upstream equipment, learned from LLDP on the wire. */
+.upstream{display:flex;flex-wrap:wrap;gap:10px;margin:8px 2px 0;font-size:9px;color:#80919a}
+.upstream-item{display:inline-flex;align-items:center;gap:5px}
+.upstream-dot{width:5px;height:5px;border-radius:50%;background:var(--gold,#d4a85c);display:inline-block}

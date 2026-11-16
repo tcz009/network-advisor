@@ -70,6 +70,15 @@ or put `SCAN_SUBNET=192.168.1.0/24` in a `.env` file beside `compose.yaml`. When
 
 Only your own range is accepted: anything wider than `/22` is refused so a typo cannot turn into a large ICMP blast. Sweeping an address range you do not own is not a good idea, and some devices treat it as hostile.
 
+## Upstream equipment (LLDP)
+
+Managed switches and routers advertise themselves with LLDP. Capturing that needs a raw socket, which the dashboard deliberately does not have, so a small **sidecar** does it instead:
+
+- `network-advisor-lldp` runs in the same image as root with only `NET_RAW`, and writes `/data/lldp.pcap` from `ether proto 0x88cc` every 45 seconds.
+- The hub never opens a raw socket; it reads and parses that file, and shows the result under the map as *"Hostname · port eth0 · VLAN eth0.4 (id 4) · 1 Gb/s"*.
+
+Set `LLDP_IFACE` if the NAS's LAN interface is not `eno1`, or `LLDP=false` to stop showing it. Unmanaged switches and most consumer routers send nothing, so an empty result is normal.
+
 ## Rooms
 
 No packet contains a room name, so rooms are the one thing you tell it. Every device in **Other devices seen** has an inline room field: type `Kitchen`, press Tab, and it is stored against that device's MAC and shown on its map chip and in the room summary above the list.
@@ -221,6 +230,8 @@ Hub defaults come from `app/compose.yaml`; the agent and interval defaults come 
 | `AGENT_INTERVAL_MS` | `30000` | How often an agent reports in (minimum 15000) |
 | `AGENT_TOKENS` | unset | `Name=token,Name=token`; binds a token to a sensor so one leak cannot rewrite the others |
 | `ALLOWED_HOSTS` | unset | DNS names the dashboard may answer on. IP literals and `localhost` are always allowed; anything else is refused with `421` |
+| `LLDP_IFACE` | `eno1` | Interface the LLDP sidecar captures on |
+| `LLDP` | `true` | Show LLDP upstream equipment |
 | `KASA_PROBE` | `true` | During a sweep, probe TCP 9999 so TP-Link Kasa plugs are found even when they ignore ICMP |
 | `DEVICE_NOTES` | unset | `ip=note;ip=note` annotations for facts the LAN cannot measure, such as how many cameras a hub serves |
 

@@ -48,6 +48,42 @@ services:
       # The image is built locally, so there is nothing for Watchtower to pull.
       com.centurylinklabs.watchtower.enable: "false"
 
+  # LLDP capture runs here, not in the hub: tcpdump needs NET_RAW, and the hub
+  # deliberately runs unprivileged with no-new-privileges. This sidecar writes a
+  # pcap into the shared volume; the hub only parses the file.
+  lldp:
+    image: network-advisor:${ADVISOR_TAG:-latest}
+    container_name: network-advisor-lldp
+    network_mode: host
+    user: "0:0"
+    environment:
+      IFACE: "${LLDP_IFACE:-eno1}"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    volumes:
+      - network-advisor-data:/data
+    restart: unless-stopped
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    command:
+      - sh
+      - -c
+      - |
+        while true; do
+          tcpdump -i "$$IFACE" -w /data/lldp.pcap.tmp -s 1500 -G 45 -W 1 'ether proto 0x88cc' >/dev/null 2>&1 || true
+          mv /data/lldp.pcap.tmp /data/lldp.pcap 2>/dev/null || true
+          sleep 5
+        done
+
 volumes:
   network-advisor-data:
     # Explicit name: the volume must not depend on which Compose project the

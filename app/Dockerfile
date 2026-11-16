@@ -1,6 +1,6 @@
 # Pinned by minor version: :22-alpine floats and made builds unreproducible.
 FROM node:22.23-alpine
-RUN apk add --no-cache iputils \
+RUN apk add --no-cache iputils tcpdump \
     && mkdir -p /data \
     && chown node:node /data
 WORKDIR /app

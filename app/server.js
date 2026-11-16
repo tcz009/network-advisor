@@ -12,6 +12,7 @@ const { describeMac } = require('./oui');
 const { discoverKasa } = require('./kasa');
 const { classifyDevice } = require('./kinds');
 const { discoverDevices } = require('./discovery');
+const { parseLldpCapture, readCapture } = require('./lldp');
 
 const exec = promisify(execFile);
 
@@ -34,6 +35,9 @@ const KASA_PROBE = String(process.env.KASA_PROBE || 'true').toLowerCase() !== 'f
 // SSDP/mDNS sweep the whole segment regardless of ping, so they find devices
 // that ignore ICMP. DISCOVERY=false leaves the scan to ping and 9999 only.
 const DISCOVERY = String(process.env.DISCOVERY || 'true').toLowerCase() !== 'false';
+// Set by the sidecar; absence just means no capture has run yet.
+const LLDP_PCAP = path.join(DATA_DIR, 'lldp.pcap');
+const LLDP_ENABLED = String(process.env.LLDP || 'true').toLowerCase() !== 'false';
 
 // Host header validation exists to defeat DNS rebinding: an attacker page whose
 // hostname resolves to this NAS sends its own hostname in Host, which is exactly
@@ -98,6 +102,7 @@ let lastScan = null;
 let lastScanStartedAt = 0;
 let kasaByIp = new Map();
 let discoveryByIp = new Map();
+let lldpCache = { mtime: 0, value: null };
 let sweepResponders = new Map();
 let lastSweepAt = 0;
 let scanInFlight = null;
@@ -669,6 +674,21 @@ function trimNodes() {
 
 // One reading of this host: used both by a hub check and by an agent report so
 // the two never drift apart.
+// Parsed from the sidecar's pcap, cached by file mtime.
+function lldpNeighbours() {
+  if (!LLDP_ENABLED) return { enabled: false, neighbours: [] };
+  const capture = readCapture(LLDP_PCAP);
+  if (!capture.ok) return { enabled: true, neighbours: [], error: capture.error };
+  if (lldpCache.mtime === capture.mtime && lldpCache.value) return lldpCache.value;
+  const value = {
+    enabled: true,
+    neighbours: parseLldpCapture(capture.buffer),
+    capturedAt: new Date(capture.mtime).toISOString()
+  };
+  lldpCache = { mtime: capture.mtime, value };
+  return value;
+}
+
 function hubHost() {
   if (!ADVISOR_HUB) return null;
   try {
@@ -1104,6 +1124,7 @@ async function handle(req, res) {
         running: Boolean(scanInFlight),
         enabled: Boolean(parseCidr(SCAN_SUBNET))
       },
+      lldp: lldpNeighbours(),
       nodes: activeNodes,
       agents: activeAgents(),
       devices: mergedDevices(),
@@ -1392,6 +1413,7 @@ module.exports = {
   mergeDevices,
   annotateDevices,
   mergedDevices,
+  lldpNeighbours,
   discoveryByIp,
   collectReadings
 };

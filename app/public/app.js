@@ -405,6 +405,27 @@ function renderRooms(devices) {
   $('rooms-summary').innerHTML = pills.join('');
 }
 
+function renderUpstream(lldp) {
+  const el = $('upstream');
+  const neighbours = (lldp && lldp.neighbours) || [];
+  if (!neighbours.length) {
+    el.textContent = lldp && lldp.error === 'no capture file'
+      ? 'Upstream equipment: no LLDP capture yet'
+      : 'Upstream equipment: nothing advertising LLDP';
+    return;
+  }
+  el.innerHTML = neighbours.slice(0, 3).map(neighbour => {
+    const bits = [
+      neighbour.systemName || neighbour.systemDescription || neighbour.chassisId,
+      neighbour.portDescription || neighbour.portId ? `port ${neighbour.portDescription || neighbour.portId}` : null,
+      neighbour.vlan ? `VLAN ${neighbour.vlan}` : null,
+      neighbour.speed,
+      neighbour.capabilities.length ? neighbour.capabilities.join(', ') : null
+    ].filter(Boolean);
+    return `<span class="upstream-item"><span class="upstream-dot"></span>${escapeHtml(bits.join(' · '))}</span>`;
+  }).join('');
+}
+
 function renderArp(devices) {
   const rows = devices || [];
   setMetric('seen-count', rows.length, 'devices');
@@ -492,6 +513,7 @@ function render(data) {
   renderNodes(data.nodes);
   renderAgents(data.agents);
   renderMap(data);
+  renderUpstream(data.lldp);
   renderTrend(data.history, data.scan);
   renderArp(data.devices || data.arp);
   renderFindings(data);
