@@ -1184,12 +1184,22 @@ function annotateDevices(devices, {
       kind: classified ? classified.kind : null,
       kindEvidence: classified ? classified.evidence : null
     };
+    const series = latencyHistory.get(String(device.mac || device.ip)) || [];
+    annotated.trend = series.slice(-LATENCY_PUBLISHED).map(point => point.ms);
+
     if (responders.size) {
       annotated.responded = responders.has(device.ip);
       annotated.sweepMs = responders.get(device.ip) ?? null;
       annotated.lastSweepAt = sweepAt;
-      const series = latencyHistory.get(String(device.mac || device.ip)) || [];
-      annotated.trend = series.slice(-LATENCY_PUBLISHED).map(point => point.ms);
+    } else if (series.length) {
+      // No sweep in this process yet: fall back to the last recorded sample, but
+      // only if it is recent enough to mean anything.
+      const latest = series[series.length - 1];
+      if (Date.now() - latest.at < 10 * 60_000) {
+        annotated.responded = true;
+        annotated.sweepMs = latest.ms;
+        annotated.lastSweepAt = latest.at;
+      }
     }
     return annotated;
   });
@@ -1198,9 +1208,12 @@ function annotateDevices(devices, {
 function mergedDevices() {
   // The sweep snapshot is fresher than the last check's, and it carries the
   // liveness and Kasa annotations, so use whichever ran most recently.
-  const checkAt = lastCheck ? new Date(lastCheck.checkedAt).getTime() : 0;
-  const scanAt = lastScan ? lastScan.finishedAt : 0;
-  const base = scanAt > checkAt ? lastScan.arp : (lastCheck?.arp || []);
+  // The sweep snapshot carries liveness, latency and broadcast identity. A check
+  // only reads the neighbour table, so prefer the sweep whenever one exists;
+  // otherwise a fresh check would hide every device's recent measurement.
+  const base = (lastScan && Array.isArray(lastScan.arp) && lastScan.arp.length)
+    ? lastScan.arp
+    : (lastCheck?.arp || []);
   return annotateDevices(mergeDevices(base, agents));
 }
 
