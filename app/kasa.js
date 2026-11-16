@@ -1,71 +1,57 @@
 'use strict';
 
-// Minimal TP-Link Kasa discovery.
+// TP-Link Kasa discovery over the legacy local protocol on TCP 9999.
 //
-// Kasa plugs (HS100/HS110/KP115 and friends) speak a small JSON protocol over
-// TCP 9999: a 4-byte big-endian length followed by AES-128-CBC ciphertext in
-// autokey mode, with the key and IV both md5(16 bytes of 0x2b).
+// Framing: a 4-byte big-endian length, then the payload XOR-encrypted with a
+// rolling key seeded at 171. Verified against python-kasa's XorEncryption
+// (kasa/transports/xortransport.py):
+//
+//   encrypt: key = 171; for b in plain: key ^= b; out.append(key)
+//   decrypt: key = 171; for b in cipher: out.append(key ^ b); key = b
+//
+// (An earlier version of this file implemented an AES autokey scheme; that is a
+// different protocol and the device simply ignored it.)
 //
 // Two levels of confidence are reported, because being wrong is worse than being
 // vague:
 //   portOpen  - something accepted a connection on 9999
-//   confirmed - the device answered a get_sysinfo request with a valid system
-//               block, so we know it is a Kasa device rather than a coincidental
-//               listener on that port.
+//   confirmed - the device answered get_sysinfo with a valid system block
 
 const net = require('node:net');
-const crypto = require('node:crypto');
 
-const KEY = crypto.createHash('md5').update(Buffer.alloc(16, 0x2b)).digest();
-const IV = KEY;
+const INITIAL_VECTOR = 171;
 const MAX_BODY = 8 * 1024;
 
-function blockCipher(data, key, iv, decrypt) {
-  const cipher = decrypt
-    ? crypto.createDecipheriv('aes-128-cbc', key, iv)
-    : crypto.createCipheriv('aes-128-cbc', key, iv);
-  // Kasa pads with zero bytes itself; PKCS#7 padding would add a whole block.
-  cipher.setAutoPadding(false);
-  return Buffer.concat([cipher.update(data), cipher.final()]);
-}
-
-function padTo16(buffer) {
-  const remainder = buffer.length % 16;
-  return remainder === 0 ? buffer : Buffer.concat([buffer, Buffer.alloc(16 - remainder)]);
-}
-
-// Autokey mode: each block is CBC'd with the previous ciphertext block as IV.
 function encryptPayload(plain) {
-  const padded = padTo16(Buffer.from(plain, 'utf8'));
-  const blocks = [];
-  let previous = IV;
-  for (let offset = 0; offset < padded.length; offset += 16) {
-    const block = blockCipher(padded.subarray(offset, offset + 16), KEY, previous, false);
-    blocks.push(block);
-    previous = block;
+  const input = Buffer.isBuffer(plain) ? plain : Buffer.from(String(plain), 'utf8');
+  const output = Buffer.alloc(input.length);
+  let key = INITIAL_VECTOR;
+  for (let i = 0; i < input.length; i++) {
+    key ^= input[i];
+    output[i] = key;
   }
-  return Buffer.concat(blocks);
+  return output;
 }
 
 function decryptPayload(cipherText) {
-  if (cipherText.length < 16 || cipherText.length % 16 !== 0) throw new Error('bad cipher length');
-  const blocks = [];
-  let previous = IV;
-  for (let offset = 0; offset < cipherText.length; offset += 16) {
-    const block = cipherText.subarray(offset, offset + 16);
-    blocks.push(blockCipher(block, KEY, previous, true));
-    previous = block;
+  const output = Buffer.alloc(cipherText.length);
+  let key = INITIAL_VECTOR;
+  for (let i = 0; i < cipherText.length; i++) {
+    output[i] = key ^ cipherText[i];
+    key = cipherText[i];
   }
-  return Buffer.concat(blocks).toString('utf8').replace(/\0+$/, '');
+  return output.toString('utf8').replace(/\0+$/, '');
 }
 
-function frame(body) {
+// The length covers the plaintext, which is the same size as the ciphertext.
+function frame(payload) {
+  const body = Buffer.isBuffer(payload) ? payload : encryptPayload(payload);
   const header = Buffer.alloc(4);
   header.writeUInt32BE(body.length, 0);
   return Buffer.concat([header, body]);
 }
 
-const REQUEST = frame(encryptPayload(JSON.stringify({ system: { get_sysinfo: {} } })));
+const REQUEST = frame(JSON.stringify({ system: { get_sysinfo: {} } }));
 
 // Returns {portOpen, confirmed, model, alias, error}. Never rejects.
 function probeKasa(ip, { timeout = 900, port = 9999 } = {}) {
@@ -77,7 +63,6 @@ function probeKasa(ip, { timeout = 900, port = 9999 } = {}) {
 
     // A socket timeout does not fire while a connect is still pending, so a
     // dead host used to hang the probe (and therefore the whole sweep) forever.
-    // The hard deadline is what actually bounds this.
     const deadline = setTimeout(() => finish({ error: portOpen ? 'no reply' : 'connect timeout' }), timeout);
 
     const finish = result => {
@@ -88,8 +73,6 @@ function probeKasa(ip, { timeout = 900, port = 9999 } = {}) {
       resolve({ portOpen, confirmed: false, model: null, alias: null, error: null, ...result });
     };
 
-    socket.setTimeout(timeout);
-    socket.once('timeout', () => finish({ error: portOpen ? 'timeout' : 'connect timeout' }));
     socket.once('error', err => finish({ error: err.code || err.message }));
     socket.once('connect', () => {
       portOpen = true;
@@ -99,7 +82,7 @@ function probeKasa(ip, { timeout = 900, port = 9999 } = {}) {
       buffer = Buffer.concat([buffer, chunk]);
       if (buffer.length < 4) return;
       const length = buffer.readUInt32BE(0);
-      if (length <= 0 || length > MAX_BODY || length % 16 !== 0) return finish({ error: 'unexpected framing' });
+      if (length <= 0 || length > MAX_BODY) return finish({ error: 'unexpected framing' });
       if (buffer.length < 4 + length) return;
       try {
         const payload = JSON.parse(decryptPayload(buffer.subarray(4, 4 + length)));

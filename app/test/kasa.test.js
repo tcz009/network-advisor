@@ -9,8 +9,22 @@ const kasa = require('../kasa.js');
 test('payloads round-trip through the autokey cipher', () => {
   const plain = JSON.stringify({ system: { get_sysinfo: {} } });
   const encrypted = kasa.encryptPayload(plain);
-  assert.equal(encrypted.length % 16, 0);
+  assert.equal(encrypted.length, plain.length);
   assert.equal(kasa.decryptPayload(encrypted), plain);
+});
+
+test('the cipher matches an independently computed reference vector', () => {
+  // XOR with a rolling key seeded at 171, per python-kasa's XorEncryption.
+  const plain = '{"system":{"get_sysinfo":{}}}';
+  assert.equal(
+    kasa.encryptPayload(plain).toString('hex'),
+    'd0f281f88bff9af7d5ef94b6d1b4c09fec95e68fe187e8caf08bf68bf6'
+  );
+  assert.equal(
+    kasa.frame(plain).toString('hex'),
+    '0000001dd0f281f88bff9af7d5ef94b6d1b4c09fec95e68fe187e8caf08bf68bf6'
+  );
+  assert.equal(kasa.decryptPayload(kasa.encryptPayload(plain)), plain);
 });
 
 test('framing prefixes the body length', () => {

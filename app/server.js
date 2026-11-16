@@ -732,7 +732,7 @@ async function runScan() {
     if (KASA_PROBE) {
       const named = new Set(devices.filter(device => device.label || device.hostname).map(device => device.ip));
       const targets = [...new Set([
-        ...sweep.responders,
+        ...sweep.responders.keys(),
         ...devices.filter(device => !named.has(device.ip)).map(device => device.ip)
       ])].slice(0, 512);
       kasa = await discoverKasa(targets);

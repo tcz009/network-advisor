@@ -29,6 +29,13 @@ test('a Kasa model beats a misleading hostname', () => {
   assert.match(result.evidence, /KP115/);
 });
 
+test('Kasa wall switches are told apart from plugs', () => {
+  assert.equal(classifyDevice({ model: 'HS200(UK)' }).kind, 'switch');
+  assert.equal(classifyDevice({ model: 'HS220(UK)' }).kind, 'switch');
+  assert.equal(classifyDevice({ model: 'HS100(UK)' }).kind, 'plug');
+  assert.equal(classifyDevice({ model: 'KP115(UK)' }).kind, 'plug');
+});
+
 test('unknown devices stay unknown instead of being guessed', () => {
   assert.equal(classifyDevice({ hostname: '192-168-1-54.local' }), null);
   assert.equal(classifyDevice({ hostname: '', label: '', model: '' }), null);

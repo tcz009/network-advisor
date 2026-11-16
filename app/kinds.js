@@ -26,7 +26,9 @@ const RULES = [
 // vendor label (a TP-Link MAC could be a plug or a router).
 function classifyDevice({ hostname = '', label = '', model = '' } = {}) {
   const fromModel = String(model || '');
-  if (/\bHS\d{3}\b|\bKP\d{3}\b/i.test(fromModel)) return { kind: 'plug', evidence: `model ${fromModel}` };
+  // Kasa numbering: HS1xx and KP1xx are plugs, HS2xx are wall switches.
+  if (/\bHS2\d{2}\b/i.test(fromModel)) return { kind: 'switch', evidence: `model ${fromModel}` };
+  if (/\bHS1\d{2}\b|\bKP1\d{2}\b/i.test(fromModel)) return { kind: 'plug', evidence: `model ${fromModel}` };
   if (/blink/i.test(fromModel)) return { kind: 'camera', evidence: `model ${fromModel}` };
 
   for (const field of ['hostname', 'label']) {
