@@ -829,31 +829,9 @@ $('settings-form').addEventListener('submit', async event => {
 });
 
 $('pihole-open').addEventListener('click', openSettings);
-$('pihole-cancel').addEventListener('click', () => { $('pihole-form').hidden = true; });
 
-$('pihole-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const button = event.target.querySelector('button[type="submit"]');
-  button.disabled = true;
-  try {
-    const response = await fetch('/api/settings/pihole', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
-      cache: 'no-store',
-      body: JSON.stringify({ url: $('pihole-url').value.trim(), token: $('pihole-token').value.trim() })
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-    $('pihole-token').value = '';
-    $('pihole-form').hidden = true;
-    toast(result.ok ? 'Pi-hole connected' : `Key saved, but Pi-hole said: ${(result.pihole && (result.pihole.error || 'no answer'))}`);
-    await refresh();
-  } catch (err) {
-    toast(`Could not save the key: ${err.message}`);
-  } finally {
-    button.disabled = false;
-  }
-});
+
+
 
 $('rooms-summary').addEventListener('click', event => {
   const pill = event.target.closest('.room-pill');
