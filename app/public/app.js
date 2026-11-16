@@ -156,10 +156,14 @@ function renderAgents(agents) {
   const rows = agents || [];
   $('agents-total').textContent = String(rows.length);
   $('agents-table').innerHTML = rows.length ? rows.map(agent => {
-    const rtt = agent.router && agent.router.avgMs != null ? fmtMs(agent.router.avgMs) : '—';
     const load = agent.load ? `${agent.load.load1} / ${agent.load.cores}` : '—';
-    const position = agent.iface ? `${escapeHtml(agent.gateway || 'no gateway')}<small class="table-secondary">${escapeHtml(agent.iface)}</small>` : escapeHtml(agent.gateway || '—');
-    return `<tr><td><div class="device-cell"><span class="device-dot">◈</span><div><strong>${escapeHtml(agent.label || agent.name)}</strong><small>${escapeHtml(agent.platform || 'sensor')}</small></div></div></td><td>${position}</td><td>${rtt}${agent.router && agent.router.lossPct > 0 ? `<small class="table-secondary">${escapeHtml(agent.router.lossPct)}% loss</small>` : ''}</td><td>${Number(agent.deviceCount || 0)}</td><td>${load}${agent.load?.busy ? '<small class="table-secondary">busy</small>' : ''}</td><td>${timeAgo(agent.lastSeen)}</td><td><span class="${agent.online ? 'online-badge' : 'offline-badge'}">${agent.online ? 'ONLINE' : 'OFFLINE'}</span></td></tr>`;
+    const hopAddress = agent.gateway || agent.vpn?.address || null;
+    const hopIface = agent.iface || agent.vpn?.iface || null;
+    const hop = hopAddress
+      ? `${escapeHtml(hopAddress)}${agent.vpn ? ' <em>VPN</em>' : ''}<small class="table-secondary">${escapeHtml(hopIface || '')}</small>`
+      : 'no default route';
+    const toHub = agent.hub && agent.hub.avgMs != null ? fmtMs(agent.hub.avgMs) : '—';
+    return `<tr><td><div class="device-cell"><span class="device-dot">◈</span><div><strong>${escapeHtml(agent.label || agent.name)}</strong><small>${escapeHtml(agent.platform || 'sensor')}</small></div></div></td><td>${hop}</td><td>${toHub}</td><td>${Number(agent.deviceCount || 0)}</td><td>${load}${agent.load?.busy ? '<small class="table-secondary">busy</small>' : ''}</td><td>${timeAgo(agent.lastSeen)}</td><td><span class="${agent.online ? 'online-badge' : 'offline-badge'}">${agent.online ? 'ONLINE' : 'OFFLINE'}</span></td></tr>`;
   }).join('') : '<tr><td class="empty-row" colspan="7">No sensors reporting yet. Run an agent on a Pi with ROLE=agent and point it at this hub.</td></tr>';
 }
 

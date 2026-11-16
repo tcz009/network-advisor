@@ -157,9 +157,9 @@ function parsePing(output) {
 // /proc/net/route columns:
 // Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
 // Destination 00000000 is the default route; the gateway is little-endian hex.
-function parseGatewayRoutes(table) {
+function parseGatewayRouteList(table) {
   const rows = String(table || '').trim().split('\n').slice(1);
-  let best = null;
+  const found = [];
   for (const row of rows) {
     const parts = row.trim().split(/\s+/);
     if (parts.length < 8) continue;
@@ -171,12 +171,28 @@ function parseGatewayRoutes(table) {
     const octets = [0, 2, 4, 6].map(i => parseInt(gateway.slice(i, i + 2), 16));
     if (octets.length !== 4 || octets.some(n => !Number.isFinite(n) || n < 0 || n > 255)) continue;
     const address = octets.reverse().join('.');
-    const metric = Number(metricRaw);
-    if (!best || (Number.isFinite(metric) && metric < best.metric)) {
-      best = { address, iface, metric: Number.isFinite(metric) ? metric : Number.MAX_SAFE_INTEGER };
-    }
+    found.push({ address, iface, metric: Number.isFinite(Number(metricRaw)) ? Number(metricRaw) : Number.MAX_SAFE_INTEGER });
   }
-  return best;
+  return found.sort((a, b) => a.metric - b.metric);
+}
+
+function parseGatewayRoutes(table) {
+  return parseGatewayRouteList(table)[0] || null;
+}
+
+// Prefer the lowest-metric default that is not a tunnel, and remember the
+// tunnel separately so the UI can say "VPN egress" instead of "router".
+function chooseGateway(routes) {
+  if (!routes.length) return null;
+  const tunnel = routes.find(route => isTunnelInterface(route.iface)) || null;
+  const lan = routes.find(route => !isTunnelInterface(route.iface)) || null;
+  const primary = lan || tunnel;
+  return {
+    address: primary.address,
+    iface: primary.iface,
+    metric: primary.metric,
+    vpn: tunnel ? { address: tunnel.address, iface: tunnel.iface } : null
+  };
 }
 
 function parseArpTable(table) {
@@ -188,6 +204,14 @@ function parseArpTable(table) {
     if (parseInt(flags, 16) === 0) return null;
     return { ip, mac, iface };
   }).filter(Boolean);
+}
+
+// A host running a VPN often has its default route pointed at the tunnel, so
+// "gateway" is then a VPN peer rather than the LAN router. Keep the two apart.
+const TUNNEL_IFACE = /^(tun\d|tap\d|wg\d|ppp\d|ipsec\d|sit\d|gre\d|nordlynx|proton)/i;
+
+function isTunnelInterface(name) {
+  return TUNNEL_IFACE.test(String(name || ''));
 }
 
 function isContainerInterface(name) {
@@ -262,7 +286,7 @@ function summariseLoad(loadText, cores) {
 
 function readGateway() {
   try {
-    return parseGatewayRoutes(fs.readFileSync('/proc/net/route', 'utf8'));
+    return chooseGateway(parseGatewayRouteList(fs.readFileSync('/proc/net/route', 'utf8')));
   } catch {
     return null;
   }
@@ -399,21 +423,34 @@ function trimNodes() {
 
 // One reading of this host: used both by a hub check and by an agent report so
 // the two never drift apart.
+function hubHost() {
+  if (!ADVISOR_HUB) return null;
+  try {
+    return new URL(ADVISOR_HUB).hostname || null;
+  } catch {
+    return null;
+  }
+}
+
 async function collectReadings() {
   const gateway = readGateway();
-  const [router, internet, dnsResult] = await Promise.all([
+  const target = hubHost();
+  const [router, internet, dnsResult, hubPing] = await Promise.all([
     ping(gateway?.address), ping(TARGET),
     dns.promises.lookup(HOSTNAME)
       .then(result => ({ ok: true, address: result.address }))
-      .catch(() => ({ ok: false, address: null }))
+      .catch(() => ({ ok: false, address: null })),
+    target ? ping(target) : Promise.resolve(null)
   ]);
   const devices = await enrichDevices(neighbourDevices(readArpTable(), gateway?.iface));
   return {
     gateway: gateway?.address || null,
     iface: gateway?.iface || null,
+    vpn: gateway?.vpn || null,
     router,
     internet,
     dns: dnsResult,
+    hub: hubPing ? { host: target, ...hubPing } : null,
     load: readLoad(),
     devices
   };
@@ -429,6 +466,7 @@ function runCheck() {
       durationMs: Date.now() - started,
       gateway: readings.gateway,
       iface: readings.iface,
+      vpn: readings.vpn,
       router: readings.router,
       target: TARGET,
       internet: readings.internet,
@@ -544,6 +582,12 @@ function sanitiseReport(body) {
     platform: cleanText(body.platform, 40) || null,
     gateway: isIpv4(body.gateway) ? body.gateway : null,
     iface: cleanText(body.iface, 20) || null,
+    vpn: body.vpn && isIpv4(body.vpn.address)
+      ? { address: body.vpn.address, iface: cleanText(body.vpn.iface, 20) || null }
+      : null,
+    hub: body.hub && typeof body.hub === 'object'
+      ? { host: cleanText(body.hub.host, 60) || null, ...cleanPingValue(body.hub) }
+      : null,
     router: cleanPingValue(body.router),
     internet: cleanPingValue(body.internet),
     dns: { ok: Boolean(body.dns && body.dns.ok), address: isIpv4(body.dns?.address) ? body.dns.address : null },
@@ -612,6 +656,8 @@ async function startAgent() {
         platform: `${os.type()} ${os.arch()}`,
         gateway: readings.gateway,
         iface: readings.iface,
+        vpn: readings.vpn,
+        hub: readings.hub,
         router: readings.router,
         internet: readings.internet,
         dns: readings.dns,
@@ -860,6 +906,9 @@ module.exports = {
   server,
   parsePing,
   parseGatewayRoutes,
+  parseGatewayRouteList,
+  chooseGateway,
+  isTunnelInterface,
   parseArpTable,
   neighbourDevices,
   isContainerInterface,

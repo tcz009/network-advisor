@@ -77,6 +77,31 @@ test('sanitiseReport refuses a body that is not an object', () => {
   assert.throws(() => advisor.sanitiseReport('nope'), /Invalid report/);
 });
 
+test('sanitiseReport keeps the tunnel and hub readings separate', () => {
+  const report = advisor.sanitiseReport({
+    ...goodReport,
+    gateway: null,
+    iface: null,
+    vpn: { address: '10.10.8.85', iface: 'tun0' },
+    hub: { host: '192.168.1.179', ok: true, reachable: true, avgMs: 0.9, lossPct: 0 }
+  });
+  assert.equal(report.gateway, null);
+  assert.equal(report.vpn.address, '10.10.8.85');
+  assert.equal(report.vpn.iface, 'tun0');
+  assert.equal(report.hub.host, '192.168.1.179');
+  assert.equal(report.hub.avgMs, 0.9);
+});
+
+test('sanitiseReport ignores a malformed tunnel or hub block', () => {
+  const report = advisor.sanitiseReport({
+    ...goodReport,
+    vpn: { address: 'not-an-ip' },
+    hub: 'nonsense'
+  });
+  assert.equal(report.vpn, null);
+  assert.equal(report.hub, null);
+});
+
 test('sanitiseReport tolerates missing sections', () => {
   const report = advisor.sanitiseReport({ name: 'bare' });
   assert.equal(report.gateway, null);

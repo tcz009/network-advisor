@@ -81,6 +81,49 @@ test('parseGatewayRoutes ignores non-default routes and down links', () => {
   assert.equal(advisor.parseGatewayRoutes(linkDown), null);
 });
 
+test('chooseGateway keeps a VPN peer from masquerading as the LAN router', () => {
+  const routes = advisor.parseGatewayRouteList(
+    'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n'
+    + 'tun0\t00000000\t55080A0A\t0003\t0\t0\t50\t00000000\t0\t0\t0\n'
+    + 'eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n'
+  );
+  assert.equal(routes.length, 2);
+  assert.equal(routes[0].iface, 'tun0'); // lowest metric wins on paper
+  const chosen = advisor.chooseGateway(routes);
+  assert.equal(chosen.address, '192.168.1.1');
+  assert.equal(chosen.iface, 'eth0');
+  assert.equal(chosen.vpn.iface, 'tun0');
+  assert.equal(chosen.vpn.address, '10.10.8.85');
+});
+
+test('chooseGateway falls back to the tunnel when it is the only default', () => {
+  const routes = advisor.parseGatewayRouteList(
+    'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n'
+    + 'tun0\t00000000\t55080A0A\t0003\t0\t0\t50\t00000000\t0\t0\t0\n'
+  );
+  const chosen = advisor.chooseGateway(routes);
+  assert.equal(chosen.address, '10.10.8.85');
+  assert.equal(chosen.iface, 'tun0');
+  assert.equal(chosen.vpn.iface, 'tun0');
+  assert.equal(advisor.chooseGateway([]), null);
+});
+
+test('isTunnelInterface recognises VPN links but not LAN ones', () => {
+  for (const name of ['tun0', 'wg0', 'ppp0', 'tap1', 'nordlynx']) {
+    assert.equal(advisor.isTunnelInterface(name), true, `${name} is a tunnel`);
+  }
+  for (const name of ['eth0', 'eno1', 'wlan0', 'br0']) {
+    assert.equal(advisor.isTunnelInterface(name), false, `${name} is not a tunnel`);
+  }
+});
+
+test('parseGatewayRoutes still returns the single lowest-metric default', () => {
+  const table = 'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n'
+    + 'eth0\t00000000\t0101A8C0\t0003\t0\t0\t300\t00000000\t0\t0\t0\n'
+    + 'eth1\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n';
+  assert.equal(advisor.parseGatewayRoutes(table).iface, 'eth1');
+});
+
 test('parseGatewayRoutes returns null on a missing table', () => {
   assert.equal(advisor.parseGatewayRoutes(''), null);
   assert.equal(advisor.parseGatewayRoutes(null), null);
