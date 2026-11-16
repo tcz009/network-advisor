@@ -52,6 +52,7 @@ const VENDORS = {
   '74:58:F3': 'Blink',     // confirmed by a Blink-Mini camera on the LAN
   '64:D8:1B': 'Vestel',    // builds Toshiba/JVC/Telefunken TVs for Europe
   'DC:71:44': 'Samsung',   // confirmed by a Samsung set on the LAN
+  '90:98:77': 'Vestel',    // confirmed by the kitchen Android TV's own network screen
   '08:7C:39': 'Amazon',    // Echo-family devices confirmed on the LAN
   'FC:E9:D8': 'Amazon',
   'F0:2F:9E': 'Amazon',
