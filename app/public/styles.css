@@ -51,3 +51,6 @@ button,input,select{font:inherit}button:focus-visible,input:focus-visible,select
 .map-leaf.device .leaf-icon{color:#4d6b73;font-size:13px}
 .map-leaf.device .leaf-name{font-size:9px;font-weight:500;max-width:150px}
 .map-leaf.device .leaf-sub{font-size:8px;color:#657681;text-align:left}
+
+/* Rows need vertical room for the bus line that runs above each of them. */
+.map-leaves{column-gap:8px;row-gap:26px;padding-top:18px}

@@ -267,7 +267,8 @@ function drawMapLines() {
   }
   rows.sort((a, b) => a.top - b.top);
 
-  const BUS_GAP = 16;
+  // Must stay smaller than the row gap in CSS, or the bus lands inside the row above.
+  const BUS_GAP = 12;
   // Rows connect through a spine down the left edge. A centre trunk would run
   // straight through the row above, which is what made the first attempt look
   // like the cards were strung on a wire.
