@@ -123,7 +123,7 @@ function renderNodes(nodes) {
 }
 function mapLeaves(data) {
   const sensors = (data.agents || []).map(agent => {
-    const tunnelOnly = !agent.gateway && Boolean(agent.vpn);
+    const tunnelOnly = Boolean(agent.tunnel) || (!agent.gateway && Boolean(agent.vpn));
     const hop = agent.gateway || agent.vpn?.address || null;
     const hopIface = agent.iface || agent.vpn?.iface || null;
     const toHub = agent.hub && agent.hub.avgMs != null ? fmtMs(agent.hub.avgMs) : null;
@@ -256,7 +256,7 @@ function renderAgents(agents) {
     const load = agent.load ? `${agent.load.load1} / ${agent.load.cores}` : '—';
     const hopAddress = agent.gateway || agent.vpn?.address || null;
     const hopIface = agent.iface || agent.vpn?.iface || null;
-    const tunnelOnly = !agent.gateway && Boolean(agent.vpn);
+    const tunnelOnly = Boolean(agent.tunnel) || (!agent.gateway && Boolean(agent.vpn));
     const vpnNote = agent.gateway && agent.vpn
       ? `<small class="table-secondary">VPN also up: ${escapeHtml(agent.vpn.address)}</small>`
       : '';

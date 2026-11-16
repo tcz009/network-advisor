@@ -183,8 +183,9 @@ function parseGatewayRoutes(table) {
   return parseGatewayRouteList(table)[0] || null;
 }
 
-// Prefer the lowest-metric default that is not a tunnel, and remember the
-// tunnel separately so the UI can say "VPN egress" instead of "router".
+// Prefer the lowest-metric default that is not a tunnel. The tunnel is only
+// reported separately when there is also a LAN default to compare against,
+// otherwise the same address would be described twice.
 function chooseGateway(routes) {
   if (!routes.length) return null;
   const tunnel = routes.find(route => isTunnelInterface(route.iface)) || null;
@@ -194,7 +195,8 @@ function chooseGateway(routes) {
     address: primary.address,
     iface: primary.iface,
     metric: primary.metric,
-    vpn: tunnel ? { address: tunnel.address, iface: tunnel.iface } : null
+    isTunnel: isTunnelInterface(primary.iface),
+    vpn: lan && tunnel ? { address: tunnel.address, iface: tunnel.iface } : null
   };
 }
 
@@ -449,6 +451,7 @@ async function collectReadings() {
   return {
     gateway: gateway?.address || null,
     iface: gateway?.iface || null,
+    tunnel: Boolean(gateway?.isTunnel),
     vpn: gateway?.vpn || null,
     router,
     internet,
@@ -469,6 +472,7 @@ function runCheck() {
       durationMs: Date.now() - started,
       gateway: readings.gateway,
       iface: readings.iface,
+      tunnel: readings.tunnel,
       vpn: readings.vpn,
       router: readings.router,
       target: TARGET,
@@ -585,6 +589,7 @@ function sanitiseReport(body) {
     platform: cleanText(body.platform, 40) || null,
     gateway: isIpv4(body.gateway) ? body.gateway : null,
     iface: cleanText(body.iface, 20) || null,
+    tunnel: Boolean(body.tunnel),
     vpn: body.vpn && isIpv4(body.vpn.address)
       ? { address: body.vpn.address, iface: cleanText(body.vpn.iface, 20) || null }
       : null,
@@ -664,6 +669,7 @@ async function startAgent() {
         platform: `${os.type()} ${os.arch()}`,
         gateway: readings.gateway,
         iface: readings.iface,
+        tunnel: readings.tunnel,
         vpn: readings.vpn,
         hub: readings.hub,
         router: readings.router,

@@ -92,6 +92,7 @@ test('chooseGateway keeps a VPN peer from masquerading as the LAN router', () =>
   const chosen = advisor.chooseGateway(routes);
   assert.equal(chosen.address, '192.168.1.1');
   assert.equal(chosen.iface, 'eth0');
+  assert.equal(chosen.isTunnel, false);
   assert.equal(chosen.vpn.iface, 'tun0');
   assert.equal(chosen.vpn.address, '10.10.8.85');
 });
@@ -104,7 +105,9 @@ test('chooseGateway falls back to the tunnel when it is the only default', () =>
   const chosen = advisor.chooseGateway(routes);
   assert.equal(chosen.address, '10.10.8.85');
   assert.equal(chosen.iface, 'tun0');
-  assert.equal(chosen.vpn.iface, 'tun0');
+  assert.equal(chosen.isTunnel, true);
+  // No LAN route to compare against, so the tunnel is not also reported as "vpn".
+  assert.equal(chosen.vpn, null);
   assert.equal(advisor.chooseGateway([]), null);
 });
 
