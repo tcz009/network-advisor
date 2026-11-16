@@ -13,7 +13,8 @@ Network Advisor is an early self-hosted dashboard that builds a picture of a hom
 - Shows IP and MAC addresses in the NAS's ARP neighbour cache when available, with hostnames where the LAN provides them and a vendor guess from a small curated MAC table.
 - Optionally sweeps your own subnet so devices that never talk to the NAS still appear.
 - Accepts reports from small **agents** on other hosts (a Raspberry Pi, a second NAS), so one map can show what several vantage points see.
-- Draws a response-time trend from recent checks and records the NAS's load, because a busy NAS inflates ping timings.
+- Draws one node per reporting host — the NAS, each sensor, each browser — joined by what was actually measured, with a response-time trend from recent checks.
+- Records the NAS's load, because a busy NAS inflates its own ping timings.
 - Keeps device labels, agent reports, and recent measurements in a persistent Docker volume on the NAS.
 
 ## What the measurements mean
