@@ -1431,6 +1431,10 @@ async function handle(req, res) {
   }
 
   if (reqUrl.pathname === '/api/pihole' && req.method === 'GET') {
+    // Explicit request: fill an empty cache rather than answering "pending".
+    if (piholeStale()) {
+      try { await fetchPihole(); } catch { /* reported in the payload */ }
+    }
     return json(res, 200, lastPihole());
   }
 

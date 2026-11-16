@@ -515,6 +515,7 @@ test('HTTP endpoints behave under attack and normal use', async t => {
 
     const hole = await (await fetch(`${base}/api/pihole`)).json();
     assert.equal(typeof hole.configured, 'boolean');
+    assert.equal(typeof hole.ok, 'boolean');
     // Unconfigured is a valid state, not an error.
     if (!hole.configured) assert.equal(hole.ok, false);
   });
