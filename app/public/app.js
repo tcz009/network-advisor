@@ -425,7 +425,9 @@ function renderPowerline(powerline) {
     ? `${powerline.bestTxMbps}/${powerline.bestRxMbps ?? '?'} Mb/s`
     : 'rate unknown';
   const described = peers.map(adapter => adapter.behindLabel || adapter.bda || adapter.mac).join(', ');
-  el.innerHTML = `<span class="upstream-dot"></span>Powerline: ${powerline.adapters.length} adapters · link ${escapeHtml(rate)}${described ? ` · bridging ${escapeHtml(described)}` : ''}`;
+  const trend = (powerline.trend || []).map(point => point.tx);
+  const spark = trend.length > 1 ? sparklineSvg(trend, 46, 12) : '';
+  el.innerHTML = `<span class="upstream-dot"></span>Powerline: ${powerline.adapters.length} adapters · link ${escapeHtml(rate)}${described ? ` · bridging ${escapeHtml(described)}` : ''} ${spark}`;
 }
 
 function renderChanges(events) {

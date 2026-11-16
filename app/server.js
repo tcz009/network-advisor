@@ -30,6 +30,7 @@ const SCAN_FILE = path.join(DATA_DIR, 'lastscan.json');
 const EVENTS_FILE = path.join(DATA_DIR, 'events.json');
 const SNAPSHOT_FILE = path.join(DATA_DIR, 'snapshot.json');
 const LATENCY_FILE = path.join(DATA_DIR, 'latency.json');
+const POWERLINE_HISTORY_FILE = path.join(DATA_DIR, 'powerline-history.json');
 const TARGET = process.env.CHECK_TARGET || '1.1.1.1';
 const HOSTNAME = process.env.CHECK_HOSTNAME || 'cloudflare.com';
 // Active discovery is opt-in: with SCAN_SUBNET unset the app stays passive and
@@ -121,6 +122,7 @@ let kasaByIp = new Map();
 let discoveryByIp = new Map();
 let lldpCache = { mtime: 0, value: null };
 let powerlineCache = { mtime: 0, value: null };
+let powerlineHistory = [];   // [{at, tx, rx, stations}]
 let changeEvents = [];
 let publicIp = { value: null, at: 0, error: null };
 let deviceSnapshot = new Map();
@@ -689,6 +691,11 @@ function loadState() {
   if (loadedEvents.ok && Array.isArray(loadedEvents.value)) {
     changeEvents = loadedEvents.value.filter(event => event && typeof event === 'object').slice(-200);
   }
+  const loadedPowerline = readJsonFile(POWERLINE_HISTORY_FILE);
+  if (loadedPowerline.ok && Array.isArray(loadedPowerline.value)) {
+    powerlineHistory = loadedPowerline.value.filter(entry => entry && typeof entry.at === 'number').slice(-240);
+  }
+
   const loadedLatency = readJsonFile(LATENCY_FILE);
   if (loadedLatency.ok && loadedLatency.value && typeof loadedLatency.value === 'object') {
     for (const [key, series] of Object.entries(loadedLatency.value)) {
@@ -837,6 +844,16 @@ function powerlineState(devices = []) {
   } else {
     parsed = parsePlctool(capture.buffer.toString('utf8'));
     powerlineCache = { mtime: capture.mtime, value: parsed };
+    // Record the link rate whenever a fresh capture arrives, so a settings or
+    // cabling change can be measured rather than felt.
+    if (parsed.ok) {
+      const last = powerlineHistory[powerlineHistory.length - 1];
+      if (!last || capture.mtime - last.at > 30_000) {
+        powerlineHistory.push({ at: capture.mtime, tx: parsed.bestTxMbps, rx: parsed.bestRxMbps, stations: parsed.adapters.length });
+        if (powerlineHistory.length > 240) powerlineHistory.splice(0, powerlineHistory.length - 240);
+        try { writeJsonAtomic(POWERLINE_HISTORY_FILE, powerlineHistory); } catch { /* best effort */ }
+      }
+    }
   }
   const byMac = new Map(devices.map(device => [String(device.mac || '').toUpperCase(), device]));
   const adapters = parsed.adapters.map(adapter => {
@@ -849,7 +866,11 @@ function powerlineState(devices = []) {
       capturedAt: new Date(capture.mtime).toISOString()
     };
   });
-  return { ...parsed, adapters };
+  return {
+    ...parsed,
+    adapters,
+    trend: powerlineHistory.slice(-24).map(entry => ({ at: entry.at, tx: entry.tx, rx: entry.rx }))
+  };
 }
 
 function hubHost() {
