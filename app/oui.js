@@ -42,6 +42,7 @@ const VENDORS = {
 
   // Smart home and streaming
   '00:0E:58': 'Sonos',
+  '38:42:0B': 'Sonos',     // confirmed by a Sonos Ray on the LAN
   '48:A6:B8': 'Sonos',
   '5C:AA:FD': 'Sonos',
   '78:28:CA': 'Sonos',
@@ -115,6 +116,7 @@ const VENDORS = {
   '20:F3:A3': 'Huawei',
 
   // Chipsets and virtualisation, useful for spotting containers
+  '00:04:4B': 'NVIDIA',    // confirmed by a Shield on the LAN
   '00:E0:4C': 'Realtek NIC',
   '24:0A:C4': 'Espressif',
   '24:6F:28': 'Espressif',
