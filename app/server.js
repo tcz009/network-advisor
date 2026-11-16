@@ -916,33 +916,46 @@ function mergeDevices(nasDevices, agentMap, { now = Date.now(), ttlMs = AGENT_DE
   return [...byIp.values()].sort((a, b) => ipToNumber(a.ip) - ipToNumber(b.ip));
 }
 
+// Everything the dashboard knows about a device, applied in one place so rooms,
+// types and notes work even before a sweep has run.
+function annotateDevices(devices, {
+  roomMap = rooms,
+  kasaMap = kasaByIp,
+  responders = sweepResponders,
+  notes = DEVICE_NOTES,
+  sweepAt = lastSweepAt
+} = {}) {
+  return (devices || []).map(device => {
+    const kasa = kasaMap.get(device.ip) || null;
+    const classified = classifyDevice({
+      hostname: device.hostname,
+      label: device.label,
+      model: kasa && kasa.model
+    });
+    const annotated = {
+      ...device,
+      room: roomMap[String(device.mac || '').toLowerCase()] || null,
+      kasa,
+      note: notes[device.ip] || device.note || null,
+      kind: classified ? classified.kind : null,
+      kindEvidence: classified ? classified.evidence : null
+    };
+    if (responders.size) {
+      annotated.responded = responders.has(device.ip);
+      annotated.sweepMs = responders.get(device.ip) ?? null;
+      annotated.lastSweepAt = sweepAt;
+    }
+    return annotated;
+  });
+}
+
 function mergedDevices() {
   // The sweep snapshot is fresher than the last check's, and it carries the
   // liveness and Kasa annotations, so use whichever ran most recently.
   const checkAt = lastCheck ? new Date(lastCheck.checkedAt).getTime() : 0;
   const scanAt = lastScan ? lastScan.finishedAt : 0;
   const base = scanAt > checkAt ? lastScan.arp : (lastCheck?.arp || []);
-  const merged = mergeDevices(base, agents);
-  if (!sweepResponders.size) return merged;
-  return merged.map(device => {
-    const kasa = kasaByIp.get(device.ip) || null;
-    const classified = classifyDevice({
-      hostname: device.hostname,
-      label: device.label,
-      model: kasa && kasa.model
-    });
-    return {
-      ...device,
-      room: rooms[String(device.mac || '').toLowerCase()] || null,
-      responded: sweepResponders.has(device.ip),
-      sweepMs: sweepResponders.get(device.ip) ?? null,
-      lastSweepAt,
-      kasa,
-      note: DEVICE_NOTES[device.ip] || device.note || null,
-      kind: classified ? classified.kind : null,
-      kindEvidence: classified ? classified.evidence : null
-    };
-  });
+  return annotateDevices(mergeDevices(base, agents));
 }
 
 async function startAgent() {
@@ -1312,6 +1325,7 @@ module.exports = {
   recordAgent,
   activeAgents,
   mergeDevices,
+  annotateDevices,
   mergedDevices,
   collectReadings
 };

@@ -36,6 +36,22 @@ test('Kasa wall switches are told apart from plugs', () => {
   assert.equal(classifyDevice({ model: 'KP115(UK)' }).kind, 'plug');
 });
 
+test('rooms apply to a device even with no sweep behind it', () => {
+  // The regression: annotations were skipped entirely until a sweep had run, so
+  // a freshly started hub showed every device unassigned.
+  const devices = [{ ip: '192.168.1.40', mac: 'B0:BE:76:D6:CC:B7', hostname: 'HS100.local' }];
+  const [annotated] = advisorForNotes.annotateDevices(devices, {
+    roomMap: { 'b0:be:76:d6:cc:b7': 'Loft' },
+    kasaMap: new Map([['192.168.1.40', { confirmed: true, model: 'HS100(UK)', alias: 'Loft light' }]]),
+    responders: new Map(),
+    notes: {},
+    sweepAt: 0
+  });
+  assert.equal(annotated.room, 'Loft');
+  assert.equal(annotated.kind, 'plug');
+  assert.equal(annotated.responded, undefined);
+});
+
 test('unknown devices stay unknown instead of being guessed', () => {
   assert.equal(classifyDevice({ hostname: '192-168-1-54.local' }), null);
   assert.equal(classifyDevice({ hostname: '', label: '', model: '' }), null);
