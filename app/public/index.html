@@ -89,6 +89,17 @@
         <div class="passive-note">Each sensor measures from where it runs, so a Pi on Wi-Fi can see a different path than the NAS on Ethernet.</div>
       </section>
 
+      <section class="split-grid">
+        <article class="panel changes-panel" aria-label="Recent changes">
+          <div class="panel-heading"><div><div class="eyebrow">SINCE LAST CHECK</div><h2>What changed</h2></div><span id="changes-count" class="count-badge">0</span></div>
+          <div id="changes-list" class="changes-list"><p class="muted-copy">Devices joining, leaving or moving appear here.</p></div>
+        </article>
+        <article class="panel dns-panel" aria-label="DNS and blocking">
+          <div class="panel-heading"><div><div class="eyebrow">DNS</div><h2>Blocking</h2></div><span class="subtle-badge">PI-HOLE</span></div>
+          <div id="pihole-body" class="pihole-body"><p class="muted-copy">Pi-hole is not configured. Set PIHOLE_TOKEN to show blocking totals.</p></div>
+        </article>
+      </section>
+
       <section class="lower-grid">
         <article class="panel devices-panel"><div class="panel-heading"><div><div class="eyebrow">BROWSERS REPORTING TO THE NAS</div><h2>Network nodes</h2></div><div class="nodes-actions"><button id="clear-offline" class="small-button" hidden>Clear offline</button><span id="nodes-total" class="count-badge">0</span></div></div>
           <div class="node-table-wrap"><table><thead><tr><th>DEVICE</th><th>CONNECTION</th><th>BROWSER ↔ NAS</th><th>LAST SEEN</th><th>STATUS</th><th><span class="visually-hidden">Forget</span></th></tr></thead><tbody id="nodes-table"><tr><td class="empty-row" colspan="6">Open this page on your phone or MacBook to add it to the map.</td></tr></tbody></table></div>

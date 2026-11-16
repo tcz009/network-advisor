@@ -26,6 +26,11 @@ services:
       # Notes for things the network cannot know, e.g.
       # 192.168.1.85=Blink hub for 10 cameras (3 offline)
       DEVICE_NOTES: "${DEVICE_NOTES:-}"
+      # Read-only Pi-hole v6 access for blocking totals. Token is an app password.
+      PIHOLE_URL: "${PIHOLE_URL:-http://192.168.1.2}"
+      PIHOLE_TOKEN: "${PIHOLE_TOKEN:-}"
+      # Optional JSON webhook for "device joined / left / moved" events.
+      ALERT_WEBHOOK: "${ALERT_WEBHOOK:-}"
     cap_drop:
       - ALL
     cap_add:

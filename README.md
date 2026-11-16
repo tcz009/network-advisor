@@ -79,6 +79,26 @@ Managed switches and routers advertise themselves with LLDP. Capturing that need
 
 Set `LLDP_IFACE` if the NAS's LAN interface is not `eno1`, or `LLDP=false` to stop showing it. Unmanaged switches and most consumer routers send nothing, so an empty result is normal.
 
+## What changed, and DNS blocking
+
+Every check compares the device list with the previous one and records what **joined, left, moved to a new address, or was replaced at the same address**. Recent events appear in the *What changed* panel; `/api/events` returns the last 100.
+
+Set `ALERT_WEBHOOK` to any URL that accepts a JSON POST (ntfy, a Telegram bridge, your own script) to be told instead of having to look:
+
+```json
+{ "app": "Network Advisor", "host": "thinkomv",
+  "events": [{ "type": "joined", "at": "2026-11-16T14:12:00Z", "detail": "new-thing (192.168.1.51) joined the network" }] }
+```
+
+The *Blocking* panel shows Pi-hole's query totals and block rate. It is read-only and needs a Pi-hole v6 app password:
+
+```sh
+PIHOLE_URL=http://192.168.1.2
+PIHOLE_TOKEN=<app password from Pi-hole Settings → API>
+```
+
+With no token the panel says so and nothing else changes.
+
 ## Rooms
 
 No packet contains a room name, so rooms are the one thing you tell it. Every device in **Other devices seen** has an inline room field: type `Kitchen`, press Tab, and it is stored against that device's MAC and shown on its map chip and in the room summary above the list.
@@ -187,6 +207,8 @@ Device labels and measurements are stored in the named Docker volume `network-ad
 | `/api/nodes/<id>` | DELETE | Forget a device (requires `x-advisor-intent: delete`) |
 | `/api/speed/download` | GET | Transfer a fixed-size body for the local speed test |
 | `/api/speed/upload` | POST | Receive up to 2 MiB for the local speed test |
+| `/api/events` | GET | Device changes: joined, left, moved, replaced |
+| `/api/pihole` | GET | Pi-hole totals, or `configured: false` |
 | `/api/export` | GET | Secret-free JSON snapshot: devices, rooms, agents, history, LLDP |
 | `/api/rooms` | GET / PUT | Read room labels, or set one with `{mac, room}` (requires `x-advisor-intent: write`) |
 | `/api/pulse` | GET | Liveness only; no side effects |

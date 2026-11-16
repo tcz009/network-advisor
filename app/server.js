@@ -13,6 +13,8 @@ const { discoverKasa } = require('./kasa');
 const { classifyDevice } = require('./kinds');
 const { discoverDevices } = require('./discovery');
 const { parseLldpCapture, readCapture } = require('./lldp');
+const { snapshot, computeChanges, appendEvents } = require('./changes');
+const { fetchPihole, lastValue: lastPihole, isStale: piholeStale } = require('./pihole');
 
 const exec = promisify(execFile);
 
@@ -24,6 +26,8 @@ const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 const AGENTS_FILE = path.join(DATA_DIR, 'agents.json');
 const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
 const SCAN_FILE = path.join(DATA_DIR, 'lastscan.json');
+const EVENTS_FILE = path.join(DATA_DIR, 'events.json');
+const SNAPSHOT_FILE = path.join(DATA_DIR, 'snapshot.json');
 const TARGET = process.env.CHECK_TARGET || '1.1.1.1';
 const HOSTNAME = process.env.CHECK_HOSTNAME || 'cloudflare.com';
 // Active discovery is opt-in: with SCAN_SUBNET unset the app stays passive and
@@ -40,6 +44,8 @@ const DISCOVERY = String(process.env.DISCOVERY || 'true').toLowerCase() !== 'fal
 // A separate volume the capture sidecar owns; the hub mounts it read-only.
 const LLDP_PCAP = process.env.LLDP_PCAP || '/lldp/lldp.pcap';
 const LLDP_ENABLED = String(process.env.LLDP || 'true').toLowerCase() !== 'false';
+// Optional webhook (ntfy, Telegram, anything that takes JSON) for device changes.
+const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK || '';
 
 // Host header validation exists to defeat DNS rebinding: an attacker page whose
 // hostname resolves to this NAS sends its own hostname in Host, which is exactly
@@ -105,6 +111,8 @@ let lastScanStartedAt = 0;
 let kasaByIp = new Map();
 let discoveryByIp = new Map();
 let lldpCache = { mtime: 0, value: null };
+let changeEvents = [];
+let deviceSnapshot = new Map();
 let sweepResponders = new Map();
 let lastSweepAt = 0;
 let scanInFlight = null;
@@ -660,6 +668,15 @@ function loadState() {
     lastSweepAt = lastScan.finishedAt;
   }
 
+  const loadedEvents = readJsonFile(EVENTS_FILE);
+  if (loadedEvents.ok && Array.isArray(loadedEvents.value)) {
+    changeEvents = loadedEvents.value.filter(event => event && typeof event === 'object').slice(-200);
+  }
+  const loadedSnapshot = readJsonFile(SNAPSHOT_FILE);
+  if (loadedSnapshot.ok && Array.isArray(loadedSnapshot.value)) {
+    deviceSnapshot = new Map(loadedSnapshot.value.filter(d => d && d.ip).map(d => [d.mac || d.ip, d]));
+  }
+
   const loadedHistory = readJsonFile(HISTORY_FILE);
   if (loadedHistory.ok && Array.isArray(loadedHistory.value)) {
     history = loadedHistory.value
@@ -691,6 +708,51 @@ function trimNodes() {
 
 // One reading of this host: used both by a hub check and by an agent report so
 // the two never drift apart.
+async function notifyChanges(events) {
+  if (!ALERT_WEBHOOK || !events.length) return;
+  try {
+    await fetch(ALERT_WEBHOOK, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        app: 'Network Advisor',
+        host: os.hostname(),
+        events: events.map(event => ({ type: event.type, at: event.at, detail: event.detail }))
+      }),
+      signal: AbortSignal.timeout(6000)
+    });
+  } catch (err) {
+    console.error('Change webhook failed:', err.message);
+  }
+}
+
+// Called after each reading: compares the current device list with the last one
+// and records what joined, left or moved.
+function recordChanges() {
+  const current = snapshot(mergedDevices());
+  if (!deviceSnapshot.size) {
+    deviceSnapshot = current;   // first run is the baseline, not an event
+    try { writeJsonAtomic(SNAPSHOT_FILE, [...current.values()]); } catch { /* best effort */ }
+    return [];
+  }
+  const events = computeChanges(deviceSnapshot, current);
+  if (!events.length) {
+    deviceSnapshot = current;
+    return [];
+  }
+  changeEvents = appendEvents(changeEvents, events);
+  deviceSnapshot = current;
+  try {
+    writeJsonAtomic(EVENTS_FILE, changeEvents);
+    writeJsonAtomic(SNAPSHOT_FILE, [...current.values()]);
+  } catch (err) {
+    console.error('Could not save change events:', err.message);
+  }
+  console.log(`Change detected: ${events.map(event => event.detail).join('; ')}`);
+  notifyChanges(events).catch(() => {});
+  return events;
+}
+
 // Parsed from the sidecar's pcap, cached by file mtime.
 function lldpNeighbours() {
   if (!LLDP_ENABLED) return { enabled: false, neighbours: [] };
@@ -774,6 +836,8 @@ function runCheck() {
     });
     if (history.length > HISTORY_LIMIT) history = history.slice(-HISTORY_LIMIT);
     saveHistory();
+    recordChanges();
+    if (piholeStale()) fetchPihole().catch(() => {});
     return lastCheck;
   })();
   return checkInFlight.finally(() => { checkInFlight = null; });
@@ -866,6 +930,7 @@ async function runScan() {
     } catch (err) {
       console.error('Could not save the scan snapshot:', err.message);
     }
+    recordChanges();
     return lastScan;
   })();
   return scanInFlight.finally(() => { scanInFlight = null; });
@@ -1149,6 +1214,8 @@ async function handle(req, res) {
         enabled: Boolean(parseCidr(SCAN_SUBNET))
       },
       lldp: lldpNeighbours(),
+      changes: changeEvents.slice(-20).reverse(),
+      pihole: lastPihole(),
       nodes: activeNodes,
       agents: activeAgents(),
       devices: mergedDevices(),
@@ -1191,6 +1258,14 @@ async function handle(req, res) {
     }
   }
 
+  if (reqUrl.pathname === '/api/events' && req.method === 'GET') {
+    return json(res, 200, { events: changeEvents.slice(-100).reverse() });
+  }
+
+  if (reqUrl.pathname === '/api/pihole' && req.method === 'GET') {
+    return json(res, 200, lastPihole());
+  }
+
   if (reqUrl.pathname === '/api/export' && req.method === 'GET') {
     // Secret-free snapshot: no tokens, no agent env, nothing that grants access.
     return json(res, 200, {
@@ -1204,6 +1279,7 @@ async function handle(req, res) {
       rooms,
       history: history.slice(-60),
       lldp: lldpNeighbours(),
+      changes: changeEvents.slice(-100),
       config: {
         scanSubnet: SCAN_SUBNET || null,
         kasaProbe: KASA_PROBE,
@@ -1460,6 +1536,8 @@ module.exports = {
   mergeDevices,
   annotateDevices,
   mergedDevices,
+  recordChanges,
+  computeChanges,
   lldpNeighbours,
   discoveryByIp,
   collectReadings

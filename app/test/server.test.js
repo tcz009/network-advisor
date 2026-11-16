@@ -500,6 +500,16 @@ test('HTTP endpoints behave under attack and normal use', async t => {
     assert.doesNotMatch(text, /ADVISOR_TOKEN|api[_-]?key|password/i);
   });
 
+  await t.test('events and Pi-hole endpoints answer honestly', async () => {
+    const events = await (await fetch(`${base}/api/events`)).json();
+    assert.ok(Array.isArray(events.events));
+
+    const hole = await (await fetch(`${base}/api/pihole`)).json();
+    assert.equal(typeof hole.configured, 'boolean');
+    // Unconfigured is a valid state, not an error.
+    if (!hole.configured) assert.equal(hole.ok, false);
+  });
+
   await t.test('history endpoint answers with an array', async () => {
     const response = await fetch(`${base}/api/history`);
     assert.equal(response.status, 200);

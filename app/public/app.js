@@ -413,6 +413,40 @@ function renderRooms(devices) {
   $('rooms-summary').innerHTML = pills.join('');
 }
 
+function renderChanges(events) {
+  const list = events || [];
+  $('changes-count').textContent = String(list.length);
+  if (!list.length) {
+    $('changes-list').innerHTML = '<p class="muted-copy">Nothing has joined, left or moved since the dashboard started watching.</p>';
+    return;
+  }
+  $('changes-list').innerHTML = list.slice(0, 8).map(event => {
+    const stamp = event.at ? new Date(event.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+    return `<div class="change-row ${escapeHtml(event.type || '')}"><span class="change-time">${escapeHtml(stamp)}</span><span class="change-detail">${escapeHtml(event.detail || event.type || '')}</span></div>`;
+  }).join('');
+}
+
+function renderPihole(pihole) {
+  const body = $('pihole-body');
+  if (!pihole || pihole.configured === false) {
+    body.innerHTML = '<p class="muted-copy">Pi-hole is not configured. Set PIHOLE_TOKEN to show blocking totals.</p>';
+    return;
+  }
+  if (pihole.ok === false) {
+    body.innerHTML = `<p class="muted-copy">Pi-hole did not answer${pihole.error ? ` (${escapeHtml(pihole.error)})` : ''}.</p>`;
+    return;
+  }
+  const summary = pihole.summary || {};
+  const top = (pihole.topBlocked || [])[0];
+  body.innerHTML = `
+    <div class="dns-figure"><strong>${escapeHtml(String(summary.percentBlocked ?? 0))}%</strong><span>of queries blocked</span></div>
+    <div class="dns-rows">
+      <div><span>Queries today</span><b>${escapeHtml(Number(summary.queries || 0).toLocaleString())}</b></div>
+      <div><span>Blocked</span><b>${escapeHtml(Number(summary.blocked || 0).toLocaleString())}</b></div>
+      ${top ? `<div><span>Top blocked</span><b title="${escapeHtml(top.domain)}">${escapeHtml(String(top.domain).slice(0, 22))}</b></div>` : ''}
+    </div>`;
+}
+
 function renderUpstream(lldp) {
   const el = $('upstream');
   const neighbours = (lldp && lldp.neighbours) || [];
@@ -538,6 +572,8 @@ function render(data) {
   renderAgents(data.agents);
   renderMap(data);
   renderUpstream(data.lldp);
+  renderChanges(data.changes);
+  renderPihole(data.pihole);
   renderTrend(data.history, data.scan);
   renderArp(data.devices || data.arp);
   renderFindings(data);
