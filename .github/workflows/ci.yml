@@ -22,6 +22,7 @@ jobs:
           node --check app/server.js
           node --check app/oui.js
           node --check app/public/app.js
+          bash -n deploy/redeploy.sh
       - name: Unit and HTTP tests
         working-directory: app
         run: npm test

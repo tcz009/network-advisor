@@ -25,14 +25,28 @@ const HOSTNAME = process.env.CHECK_HOSTNAME || 'cloudflare.com';
 const SCAN_SUBNET = process.env.SCAN_SUBNET || '';
 const SCAN_MIN_INTERVAL_MS = 30_000;
 
+// Host header validation exists to defeat DNS rebinding: an attacker page whose
+// hostname resolves to this NAS sends its own hostname in Host, which is exactly
+// what the Origin check cannot detect. IP literals and localhost are always fine;
+// add any DNS names you actually use here.
+const ALLOWED_HOSTS = String(process.env.ALLOWED_HOSTS || '')
+  .split(',')
+  .map(host => host.trim().toLowerCase())
+  .filter(Boolean);
+
 // Agent mode turns the same image into a vantage point that pushes its own view
 // to a hub. It opens no ports, so it is safe to run beside Pi-hole or a router.
 const ROLE = (process.env.ROLE || 'hub').toLowerCase();
 const AGENT_TOKEN = process.env.AGENT_TOKEN || '';
+// AGENT_TOKENS=MediaPi=abc,vpngate=def binds a token to a sensor name, so one
+// leaked token cannot rewrite every other sensor's readings.
+const AGENT_TOKENS = parseAgentTokens(process.env.AGENT_TOKENS || '');
 const ADVISOR_HUB = (process.env.ADVISOR_HUB || '').replace(/\/+$/, '');
 const AGENT_NAME = process.env.AGENT_NAME || os.hostname();
 const AGENT_INTERVAL_MS = Math.max(15_000, Number(process.env.AGENT_INTERVAL_MS) || 30_000);
 const AGENT_ONLINE_MS = 90_000;
+const AGENT_TTL_MS = 7 * 24 * 60 * 60_000;
+const MAX_AGENTS = 32;
 // A sensor that stops reporting keeps its row but stops contributing devices,
 // so a decommissioned Pi cannot leave phantom "seen by" tags on the map.
 const AGENT_DEVICE_TTL_MS = 10 * 60_000;
@@ -56,11 +70,44 @@ let agents = Object.create(null);
 let history = [];
 let lastCheck = null;
 let lastScan = null;
+let lastScanStartedAt = 0;
+let scanInFlight = null;
 let checkInFlight = null;
 let saveTimer = null;
 const HOST_CACHE = new Map();
 
 /* ------------------------------------------------------------------ helpers */
+
+function hostAllowed(hostHeader) {
+  const raw = String(hostHeader || '').trim().toLowerCase();
+  if (!raw) return false;
+  let name = raw;
+  if (name.startsWith('[')) {
+    const end = name.indexOf(']');
+    if (end === -1) return false;
+    name = name.slice(0, end + 1);
+  } else {
+    name = name.split(':')[0];
+  }
+  if (name === 'localhost' || name === '127.0.0.1' || name === '[::1]') return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(name)) return true;
+  if (/^\[[0-9a-f:.]+\]$/.test(name)) return true;
+  return ALLOWED_HOSTS.includes(name);
+}
+
+function parseAgentTokens(raw) {
+  const map = Object.create(null);
+  for (const part of String(raw || '').split(',')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const split = trimmed.indexOf('=');
+    if (split < 1) continue;
+    const name = trimmed.slice(0, split).trim();
+    const token = trimmed.slice(split + 1).trim();
+    if (name && token) map[name] = token;
+  }
+  return map;
+}
 
 function cleanText(value, max = 50) {
   return String(value || '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, max);
@@ -334,6 +381,11 @@ function ping(host) {
   return exec('ping', ['-c', '3', '-W', '2', host], { timeout: 9000 })
     .then(({ stdout }) => parsePing(stdout))
     .catch(err => {
+      // A missing or unusable ping binary is not a network fault, and reporting
+      // it as one made every host look down.
+      if (err.code === 'ENOENT' || err.code === 'EACCES') {
+        return { ok: false, reachable: false, avgMs: null, lossPct: null, error: `ping unavailable (${err.code})` };
+      }
       // ping exits non-zero when any probe is lost, and its stdout can still
       // hold valid replies worth keeping.
       const parsed = parsePing(`${err.stdout || ''} ${err.stderr || ''}`);
@@ -388,11 +440,43 @@ async function pingSweep(hosts, concurrency = 32) {
 
 /* ------------------------------------------------------------------ storage */
 
+function writeJsonAtomic(file, value) {
+  const payload = JSON.stringify(value, null, 2);
+  const tmp = `${file}.tmp`;
+  // Write, flush, then rotate. A crash mid-write leaves either the old file or
+  // the .tmp, never a truncated original.
+  const fd = fs.openSync(tmp, 'w', 0o600);
+  try {
+    fs.writeFileSync(fd, payload);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    if (fs.existsSync(file)) fs.renameSync(file, `${file}.bak`);
+  } catch (err) {
+    console.error(`Could not rotate ${file}: ${err.message}`);
+  }
+  fs.renameSync(tmp, file);
+}
+
+function readJsonFile(file) {
+  for (const candidate of [file, `${file}.bak`]) {
+    try {
+      return { ok: true, value: JSON.parse(fs.readFileSync(candidate, 'utf8')), from: candidate };
+    } catch (err) {
+      if (err.code === 'ENOENT') continue;
+      console.error(`Could not read ${candidate}: ${err.message}`);
+    }
+  }
+  return { ok: false, value: null, from: null };
+}
+
 function flushState() {
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(DATA_FILE, JSON.stringify(nodes, null, 2));
-    fs.writeFileSync(AGENTS_FILE, JSON.stringify(agents, null, 2));
+    writeJsonAtomic(DATA_FILE, nodes);
+    writeJsonAtomic(AGENTS_FILE, agents);
   } catch (err) {
     console.error('Could not save state:', err.message);
   }
@@ -410,26 +494,66 @@ function scheduleSave() {
 function saveHistory() {
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history));
+    writeJsonAtomic(HISTORY_FILE, history);
   } catch (err) {
     console.error('Could not save history:', err.message);
   }
 }
 
+function trimAgents(map, { now = Date.now(), ttlMs = AGENT_TTL_MS, max = MAX_AGENTS } = {}) {
+  for (const agent of Object.values(map)) {
+    if (!agent.lastSeen || now - agent.lastSeen > ttlMs) delete map[agent.name];
+  }
+  const entries = Object.values(map);
+  if (entries.length > max) {
+    entries
+      .sort((a, b) => (a.lastSeen || 0) - (b.lastSeen || 0))
+      .slice(0, entries.length - max)
+      .forEach(agent => { delete map[agent.name]; });
+  }
+  return map;
+}
+
 function loadState() {
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    Object.assign(nodes, JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
-  } catch { nodes = Object.create(null); }
-  for (const node of Object.values(nodes)) delete node.userAgent;
-  try {
-    Object.assign(agents, JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8')));
-  } catch { agents = Object.create(null); }
+  } catch (err) {
+    console.error('Could not create data directory:', err.message);
+  }
+
+  const loadedNodes = readJsonFile(DATA_FILE);
+  if (loadedNodes.ok) {
+    for (const [key, node] of Object.entries(loadedNodes.value || {})) {
+      if (!node || typeof node !== 'object' || Array.isArray(node)) continue;
+      if (typeof node.id !== 'string' || !node.id) node.id = key;
+      delete node.userAgent;
+      if (typeof node.lastSeen !== 'number') node.lastSeen = 0;
+      nodes[node.id] = node;
+    }
+  } else if (loadedNodes.from === null) {
+    console.warn(`${DATA_FILE} missing or unreadable; starting with no devices`);
+  }
+
+  const loadedAgents = readJsonFile(AGENTS_FILE);
+  if (loadedAgents.ok) {
+    for (const [key, agent] of Object.entries(loadedAgents.value || {})) {
+      if (!agent || typeof agent !== 'object' || Array.isArray(agent)) continue;
+      if (typeof agent.name !== 'string' || !agent.name) agent.name = key;
+      if (typeof agent.label !== 'string' || !agent.label) agent.label = agent.name;
+      if (typeof agent.lastSeen !== 'number') agent.lastSeen = 0;
+      agents[agent.name] = agent;
+    }
+  }
+
   trimNodes();
-  try {
-    const saved = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
-    if (Array.isArray(saved)) history = saved.slice(-HISTORY_LIMIT);
-  } catch { history = []; }
+  trimAgents(agents);
+
+  const loadedHistory = readJsonFile(HISTORY_FILE);
+  if (loadedHistory.ok && Array.isArray(loadedHistory.value)) {
+    history = loadedHistory.value
+      .filter(record => record && typeof record === 'object' && !Array.isArray(record))
+      .slice(-HISTORY_LIMIT);
+  }
 }
 
 function pruneNodes(map, { now = Date.now(), ttlMs = NODE_TTL_MS, max = MAX_NODES } = {}) {
@@ -533,24 +657,31 @@ async function runScan() {
   if (!parsed) {
     return { enabled: false, error: SCAN_SUBNET ? 'SCAN_SUBNET must be a CIDR between /22 and /30' : 'Active discovery is off' };
   }
-  if (lastScan && Date.now() - lastScan.finishedAt < SCAN_MIN_INTERVAL_MS) {
+  // Concurrent callers used to start one sweep each: the cooldown only consulted
+  // a timestamp written after the sweep finished. One sweep at a time now.
+  if (scanInFlight) return scanInFlight;
+  if (lastScan && Date.now() - lastScanStartedAt < SCAN_MIN_INTERVAL_MS) {
     return { ...lastScan, cached: true };
   }
   const started = Date.now();
-  const answered = await pingSweep(parsed.hosts);
-  const gateway = readGateway();
-  const devices = await enrichDevices(neighbourDevices(readArpTable(), gateway?.iface));
-  lastScan = {
-    enabled: true,
-    subnet: `${parsed.network}/${parsed.prefix}`,
-    probed: parsed.hosts.length,
-    answered,
-    devices: devices.length,
-    arp: devices,
-    tookMs: Date.now() - started,
-    finishedAt: Date.now()
-  };
-  return lastScan;
+  lastScanStartedAt = started;
+  scanInFlight = (async () => {
+    const answered = await pingSweep(parsed.hosts);
+    const gateway = readGateway();
+    const devices = await enrichDevices(neighbourDevices(readArpTable(), gateway?.iface));
+    lastScan = {
+      enabled: true,
+      subnet: `${parsed.network}/${parsed.prefix}`,
+      probed: parsed.hosts.length,
+      answered,
+      devices: devices.length,
+      arp: devices,
+      tookMs: Date.now() - started,
+      finishedAt: Date.now()
+    };
+    return lastScan;
+  })();
+  return scanInFlight.finally(() => { scanInFlight = null; });
 }
 
 /* ------------------------------------------------------------------- agents */
@@ -641,6 +772,7 @@ function recordAgent(report) {
     firstSeen: previous.firstSeen || new Date().toISOString(),
     lastSeen: Date.now()
   };
+  trimAgents(agents);
   scheduleSave();
   return agents[report.name];
 }
@@ -732,6 +864,9 @@ async function startAgent() {
 /* ------------------------------------------------------------------ routing */
 
 async function handle(req, res) {
+  if (!hostAllowed(req.headers.host)) {
+    return json(res, 421, { error: 'Host not allowed; set ALLOWED_HOSTS for DNS names' });
+  }
   const reqUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin) {
@@ -787,14 +922,18 @@ async function handle(req, res) {
   }
 
   if (reqUrl.pathname === '/api/agents/report' && req.method === 'POST') {
-    if (!AGENT_TOKEN) {
-      return json(res, 403, { error: 'Agent intake is disabled; set AGENT_TOKEN on the hub' });
-    }
-    if (!agentTokenMatches(req.headers['x-advisor-token'], AGENT_TOKEN)) {
-      return json(res, 403, { error: 'Invalid agent token' });
+    const perAgent = Object.keys(AGENT_TOKENS).length > 0;
+    if (!AGENT_TOKEN && !perAgent) {
+      return json(res, 403, { error: 'Agent intake is disabled; set AGENT_TOKEN or AGENT_TOKENS on the hub' });
     }
     try {
       const body = await readBody(req, 512 * 1024);
+      const claimed = cleanText(body && body.name, 40).replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
+      const expected = perAgent ? AGENT_TOKENS[claimed] : AGENT_TOKEN;
+      if (!expected || (!perAgent && !agentTokenMatches(req.headers['x-advisor-token'], expected)) ||
+          (perAgent && !agentTokenMatches(req.headers['x-advisor-token'], expected))) {
+        return json(res, 403, { error: 'Invalid agent token' });
+      }
       const report = sanitiseReport(body);
       recordAgent(report);
       return json(res, 200, { ok: true, name: report.name, devices: report.devices.length });
@@ -819,8 +958,22 @@ async function handle(req, res) {
     const chunk = Buffer.alloc(64 * 1024);
     let remaining = bytes;
     while (remaining > 0) {
+      if (res.destroyed || res.writableEnded) return;
       const part = remaining >= chunk.length ? chunk : chunk.subarray(0, remaining);
-      if (!res.write(part)) await new Promise(resolve => res.once('drain', resolve));
+      if (!res.write(part)) {
+        // Wait for drain, but give up if the client walks away: the old
+        // await-forever held the handler open indefinitely.
+        const alive = await new Promise(resolve => {
+          const finish = () => {
+            res.off('drain', finish);
+            res.off('close', finish);
+            resolve(!res.destroyed);
+          };
+          res.once('drain', finish);
+          res.once('close', finish);
+        });
+        if (!alive) return;
+      }
       remaining -= part.length;
     }
     return res.end();
@@ -915,6 +1068,10 @@ const server = http.createServer((req, res) => {
 
 /* -------------------------------------------------------------------- start */
 
+// Bound slow clients: nothing else limits how long a response may take.
+server.setTimeout(30_000);
+server.maxConnections = 256;
+
 server.on('clientError', (err, socket) => {
   if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
 });
@@ -935,8 +1092,19 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   });
 }
 
+async function selfTestPing() {
+  const result = await ping('127.0.0.1');
+  if (result.avgMs === null) {
+    console.error(`[startup] ping self-test failed (${result.error}). Every timing and sweep will be empty; check CAP_NET_RAW / net.ipv4.ping_group_range.`);
+  }
+}
+
 if (require.main === module) {
-  loadState();
+  try {
+    loadState();
+  } catch (err) {
+    console.error('State load failed, starting empty:', err.message);
+  }
   if (ROLE === 'agent') {
     startAgent().catch(err => {
       console.error('Agent could not start:', err.message);
@@ -944,6 +1112,12 @@ if (require.main === module) {
     });
   } else {
     server.listen(PORT, BIND_HOST, () => console.log(`Network Advisor listening on ${BIND_HOST}:${PORT}`));
+    selfTestPing().catch(() => {});
+    if (!AGENT_TOKEN && !Object.keys(AGENT_TOKENS).length) {
+      console.warn('Agent intake is disabled (no AGENT_TOKEN / AGENT_TOKENS).');
+    } else if (AGENT_TOKEN && !Object.keys(AGENT_TOKENS).length) {
+      console.warn('Using one shared AGENT_TOKEN: any holder can change any sensor. Prefer AGENT_TOKENS=name=token,...');
+    }
   }
 }
 
@@ -957,6 +1131,11 @@ module.exports = {
   parseArpTable,
   neighbourDevices,
   pruneNodes,
+  trimAgents,
+  writeJsonAtomic,
+  readJsonFile,
+  hostAllowed,
+  parseAgentTokens,
   isContainerInterface,
   cleanText,
   decodePathname,

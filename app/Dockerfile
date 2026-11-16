@@ -1,4 +1,5 @@
-FROM node:22-alpine
+# Pinned by minor version: :22-alpine floats and made builds unreproducible.
+FROM node:22.23-alpine
 RUN apk add --no-cache iputils \
     && mkdir -p /data \
     && chown node:node /data

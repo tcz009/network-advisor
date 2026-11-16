@@ -12,13 +12,18 @@ ExecStart=/usr/local/bin/node server.js
 Restart=always
 RestartSec=10
 
-# The agent writes nothing except its small state directory.
+# Runs as root because a DietPi host has no ordinary user to run it as, and
+# because ICMP depends on the host's net.ipv4.ping_group_range. If your host has
+# a normal user and ping_group_range permits it, use that user instead; the
+# README documents a rootless cron install that needs no root at all.
 StateDirectory=network-advisor-agent
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/network-advisor-agent
 
+# No setuid escalation: nothing this unit executes should gain privileges.
+NoNewPrivileges=true
 # ping needs a raw socket; nothing else here is privileged.
 AmbientCapabilities=CAP_NET_RAW
 CapabilityBoundingSet=CAP_NET_RAW

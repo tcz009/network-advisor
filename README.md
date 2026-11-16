@@ -138,6 +138,26 @@ docker compose down
 
 Device labels and measurements are stored in the named Docker volume `network-advisor-data` (Compose may prefix the volume with the project name). Back it up with your normal Docker/OMV backup process. **Do not use `docker compose down -v` unless you intend to delete that stored data.**
 
+## Deploying, and rolling back
+
+`deploy/redeploy.sh` (run on the NAS) is the supported path. It resolves a branch or commit, builds the hub tagged with the short SHA, ships the matching bundle to each Pi, stages and health-checks each swap, and prints the fleet it sees at the end. Any failed step exits non-zero.
+
+```sh
+deploy/redeploy.sh              # deploy origin/main
+deploy/redeploy.sh <commit>     # deploy a specific revision
+deploy/redeploy.sh rollback     # return to the previously deployed commit
+```
+
+Deployments are recorded in `/opt/cache/deploy-state/history`, images are tagged `network-advisor:<sha>`, and the last three bundles are kept in `/opt/cache/bundles`.
+
+The data volume has an explicit name (`network-advisor-data`), so it no longer depends on which Compose project started the stack. Older installs created `network-advisor_network-advisor-data`; copy it across once:
+
+```sh
+docker volume create network-advisor-data
+docker run --rm -v network-advisor_network-advisor-data:/from -v network-advisor-data:/to \
+  alpine sh -c 'cp -a /from/. /to/'
+```
+
 ## Configuration
 
 The defaults are in `app/compose.yaml`:
@@ -154,6 +174,8 @@ The defaults are in `app/compose.yaml`:
 | `ADVISOR_HUB` | unset | Hub base URL, required in agent mode |
 | `AGENT_NAME` | hostname | Name shown for this sensor |
 | `AGENT_INTERVAL_MS` | `30000` | How often an agent reports in (minimum 15000) |
+| `AGENT_TOKENS` | unset | `Name=token,Name=token`; binds a token to a sensor so one leak cannot rewrite the others |
+| `ALLOWED_HOSTS` | unset | DNS names the dashboard may answer on. IP literals and `localhost` are always allowed; anything else is refused with `421` |
 
 ## Privacy and security
 
@@ -161,7 +183,11 @@ The dashboard currently has no login or HTTPS. It is designed for a trusted home
 
 The container runs as an unprivileged user, uses a read-only root filesystem, drops unnecessary Linux capabilities, and keeps only `NET_RAW` for ping checks. The app stores device names and measured values on the NAS; it does not store browser user-agent strings, load third-party fonts, or use analytics. The NAS contacts the configured ping target and performs the configured DNS lookup during checks.
 
-Agent intake is closed unless `AGENT_TOKEN` is set on the hub, and the token is compared in constant time. Mutating requests still require a same-origin `Origin` header, and deleting a device additionally requires an `x-advisor-intent: delete` header, which a browser cannot set cross-origin without a preflight it will fail. Pages are served with a `default-src 'self'` content security policy.
+Agent intake is closed unless `AGENT_TOKEN` or `AGENT_TOKENS` is set on the hub, and tokens are compared in constant time. `AGENT_TOKENS` binds a token to a sensor name; a single shared `AGENT_TOKEN` means any holder can rewrite every sensor, so per-sensor tokens are preferred.
+
+The `Host` header is validated against a plain-address allowlist: IP literals and `localhost` are accepted, and DNS names must be listed in `ALLOWED_HOSTS`. That is there to defeat DNS rebinding, which the `Origin` check cannot see — under rebinding the attacker's hostname is both the Host and the Origin. Mutating requests also require a same-origin `Origin` header, deleting a device requires an `x-advisor-intent: delete` header, and pages are served with a `default-src 'self'` content security policy. None of that is authentication: this dashboard has no login, so anything that can reach the port can read everything on it.
+
+The token crosses your LAN in clear text on every report. Treat it as a LAN-only secret, and keep the port off any untrusted network. State files are written atomically and the previous copy is kept as `.bak`.
 
 Agents send their host's gateway, load average, ping results, and neighbour table to the hub; they send no file contents, no process list, and no credentials other than the shared token.
 
@@ -172,6 +198,8 @@ Agents send their host's gateway, load average, ping results, and neighbour tabl
 - **Internet says no ping reply:** some networks block ICMP. Check DNS and a browser on the NAS LAN before concluding the internet is down.
 - **Phone or Mac is missing from the map:** open this dashboard in that device's browser and leave the page open. It checks in while the page is active; browsers cannot run in the background indefinitely.
 - **No powerline or access point details:** this version does not query vendor equipment APIs. Select the relevant connection type manually for a browser node; intermediate hops remain unknown.
+- **Every timing is empty:** the container or agent cannot do ICMP. The hub runs a ping self-test at startup and logs `ping self-test failed`; check `net.ipv4.ping_group_range` on the host, and that `iputils` is installed.
+- **The dashboard returns 421 for its own address:** you reached it by DNS name. Add that name to `ALLOWED_HOSTS`, or use the IP.
 - **Router or internet times look worse than they are:** check the load figure in the findings panel. A NAS running a heavy job reports inflated ping times; re-run a check when it is idle.
 - **A sensor never appears:** confirm `AGENT_TOKEN` matches on both ends, that the hub returns something other than `403` from `/api/agents`, and read `journalctl -u network-advisor-agent`. Visit `/api/agents` on the hub to see whether intake is enabled at all.
 - **A device shows the wrong vendor:** the MAC prefixes come from a small curated table in `app/oui.js`, not the full IEEE registry. Add the prefix there if you want it named.
@@ -198,7 +226,7 @@ No dependencies, no build step. Node.js 22 or newer:
 
 ```sh
 cd app
-npm test          # 40 unit and HTTP tests, no network access needed
+npm test          # 60 unit and HTTP tests, no network access needed
 npm start         # runs the hub on http://localhost:8090
 ```
 

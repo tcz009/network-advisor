@@ -227,6 +227,23 @@ test('summariseLoad survives empty input', () => {
 
 /* -------------------------------------------------------------------- paths */
 
+test('hostAllowed accepts address literals and rejects stray DNS names', () => {
+  for (const host of ['192.168.1.179:8090', '100.93.238.43:8090', 'localhost:8090', '127.0.0.1:8090', '[::1]:8090']) {
+    assert.equal(advisor.hostAllowed(host), true, `${host} should be allowed`);
+  }
+  // A DNS name is exactly what DNS rebinding provides, so it needs an allowlist.
+  for (const host of ['rebind.example:8090', 'evil.test', '', null, '[unterminated']) {
+    assert.equal(advisor.hostAllowed(host), false, `${host} should be refused`);
+  }
+});
+
+test('parseAgentTokens reads name=token pairs and ignores rubbish', () => {
+  const parsed = advisor.parseAgentTokens('MediaPi=aaa,vpngate=bbb, ,broken,nokey=');
+  assert.deepEqual(Object.keys(parsed).sort(), ['MediaPi', 'vpngate']);
+  assert.equal(parsed.MediaPi, 'aaa');
+  assert.deepEqual(Object.keys(advisor.parseAgentTokens('')), []);
+});
+
 test('decodePathname refuses hostile percent encoding instead of throwing', () => {
   assert.equal(advisor.decodePathname('/%zz').ok, false);
   assert.equal(advisor.decodePathname('/%E0%A4%A').ok, false);
@@ -294,6 +311,21 @@ test('HTTP endpoints behave under attack and normal use', async t => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   t.after(() => new Promise(resolve => server.close(resolve)));
+
+  await t.test('a rebound DNS name is refused before any route runs', async () => {
+    const status = await new Promise((resolve, reject) => {
+      const req = require('node:http').request(
+        { host: '127.0.0.1', port: server.address().port, path: '/api/state', method: 'GET', headers: { Host: 'rebind.example' } },
+        res => { res.resume(); resolve(res.statusCode); }
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(status, 421);
+    // The address-literal form of the same server still works.
+    const ok = await fetch(`${base}/api/pulse`);
+    assert.equal(ok.status, 200);
+  });
 
   await t.test('serves the dashboard with a strict content policy', async () => {
     const response = await fetch(`${base}/`);

@@ -54,3 +54,7 @@ button,input,select{font:inherit}button:focus-visible,input:focus-visible,select
 
 /* Rows need vertical room for the bus line that runs above each of them. */
 .map-leaves{column-gap:8px;row-gap:26px;padding-top:18px}
+
+/* Stale data must not look live. */
+body.data-stale .metric-card,body.data-stale .map-panel,body.data-stale .devices-panel,body.data-stale .agents-panel,body.data-stale .seen-panel{opacity:.55}
+@media (pointer:coarse){.row-delete{width:44px;height:44px;font-size:16px}.row-actions{width:52px}}

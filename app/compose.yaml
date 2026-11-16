@@ -1,6 +1,7 @@
 services:
   network-advisor:
     build: .
+    image: network-advisor:${ADVISOR_TAG:-latest}
     container_name: network-advisor
     network_mode: host
     environment:
@@ -12,9 +13,14 @@ services:
       # Leave both unset for a purely passive hub on a trusted LAN.
       # SCAN_SUBNET turns on an ICMP sweep of your own range, e.g. 192.168.1.0/24.
       SCAN_SUBNET: "${SCAN_SUBNET:-}"
-      # Required before any Pi agent may report in. Generate one with:
-      #   openssl rand -hex 24
+      # Intake is closed unless one of these is set. AGENT_TOKENS binds a token
+      # to a sensor name, so one leak cannot rewrite the other sensors.
+      # Prefer AGENT_TOKENS=MediaPi=<token>,vpngate=<token>
       AGENT_TOKEN: "${AGENT_TOKEN:-}"
+      AGENT_TOKENS: "${AGENT_TOKENS:-}"
+      # DNS names the dashboard may answer on. IP literals and localhost are
+      # always accepted; this exists to defeat DNS rebinding.
+      ALLOWED_HOSTS: "${ALLOWED_HOSTS:-}"
     cap_drop:
       - ALL
     cap_add:
@@ -27,9 +33,18 @@ services:
     volumes:
       - network-advisor-data:/data
     restart: unless-stopped
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     labels:
       # The image is built locally, so there is nothing for Watchtower to pull.
       com.centurylinklabs.watchtower.enable: "false"
 
 volumes:
   network-advisor-data:
+    # Explicit name: the volume must not depend on which Compose project the
+    # stack happened to be started with, or a `-p` change silently starts empty.
+    name: network-advisor-data

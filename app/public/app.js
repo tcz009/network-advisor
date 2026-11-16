@@ -33,23 +33,25 @@ function loadIdentity() {
   $('device-name').value = state.name;
   $('connection-type').value = state.connection;
 }
-function saveIdentity() {
+async function saveIdentity() {
   state.name = $('device-name').value.trim() || detectDevice();
   state.connection = $('connection-type').value;
   persistIdentity();
-  postNode();
-  toast('Device details saved to the NAS');
+  const saved = await postNode();
+  toast(saved ? 'Device details saved to the NAS' : 'Saved on this device only — the NAS did not answer');
 }
 function persistIdentity() {
   localStorage.setItem(storageKey, JSON.stringify({ id: state.id, name: state.name, connection: state.connection, downMbps: state.downMbps, upMbps: state.upMbps, speedCheckedAt: state.speedCheckedAt }));
 }
 async function postNode() {
   try {
-    await fetch('/api/nodes', {
+    const response = await fetch('/api/nodes', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-      body: JSON.stringify({ id: state.id, name: state.name, connection: state.connection, deviceType: detectDevice(), browserRttMs: state.rtt, downMbps: state.downMbps, upMbps: state.upMbps, speedCheckedAt: state.speedCheckedAt })
+      body: JSON.stringify({ id: state.id, name: state.name, connection: state.connection, deviceType: detectDevice(), browserRttMs: state.rtt, downMbps: state.downMbps, upMbps: state.upMbps, speedCheckedAt: state.speedCheckedAt }),
+      signal: AbortSignal.timeout(8000)
     });
-  } catch { /* offline or the NAS is restarting */ }
+    return response.ok;
+  } catch { return false; }   // offline or the NAS is restarting
 }
 async function measureLocalTransfer() {
   const downloadBytes = 4 * 1024 * 1024;
@@ -123,6 +125,7 @@ function renderNodes(nodes) {
   const clearButton = $('clear-offline');
   clearButton.hidden = offlineCount === 0;
   clearButton.textContent = `Clear offline (${offlineCount})`;
+  const focusedId = document.activeElement?.dataset?.nodeId || null;
   $('nodes-table').innerHTML = sorted.length ? sorted.map(node => `<tr><td><div class="device-cell"><span class="device-dot">${node.deviceType?.includes('Mac') || node.deviceType?.includes('PC') ? '▱' : '▯'}</span><div><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.deviceType || 'Device')}</small></div></div></td><td>${escapeHtml(node.connection || 'Unknown')}<small class="table-secondary">Set on device</small></td><td>${fmtMs(node.browserRttMs)}<small class="table-secondary">Device-to-NAS response</small><small class="table-secondary">↓ ${fmtMbps(node.downMbps)} &nbsp; ↑ ${fmtMbps(node.upMbps)}${node.speedCheckedAt ? ` · checked ${timeAgo(new Date(node.speedCheckedAt).getTime())}` : ' · not measured'}</small></td><td>${timeAgo(node.lastSeen)}</td><td><span class="${node.online ? 'online-badge' : 'offline-badge'}">${node.online ? 'ONLINE' : 'OFFLINE'}</span></td><td class="row-actions"><button class="row-delete" data-node-id="${escapeHtml(node.id)}" title="Forget this device" aria-label="Forget ${escapeHtml(node.name)}">×</button></td></tr>`).join('') : '<tr><td class="empty-row" colspan="6">Open this page on your phone or MacBook to add it to the map.</td></tr>';
 }
 function mapLeaves(data) {
@@ -166,6 +169,7 @@ function mapLeaves(data) {
   const known = new Set();
   for (const leaf of sensors) for (const address of leaf.addresses) known.add(address);
   for (const address of data.addresses || []) known.add(address);
+  if (data.gateway) known.add(data.gateway);   // the Router node already represents it
 
   const entries = (data.devices || [])
     .filter(device => !known.has(device.ip))
@@ -229,7 +233,10 @@ function drawMapLines() {
   if (!stage || !svg) return;
   const width = stage.clientWidth;
   const height = stage.clientHeight;
-  if (!width || !height) return;
+  if (!width || !height) {
+    svg.innerHTML = '';
+    return;
+  }
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   svg.setAttribute('width', String(width));
   svg.setAttribute('height', String(height));
@@ -354,7 +361,7 @@ function renderAgents(agents) {
       ? `${escapeHtml(hopAddress)}${tunnelOnly ? ' <em>VPN</em>' : ''}<small class="table-secondary">${escapeHtml(hopIface || '')}</small>${vpnNote}`
       : 'no default route';
     const toHub = agent.hub && agent.hub.avgMs != null ? fmtMs(agent.hub.avgMs) : '—';
-    return `<tr><td><div class="device-cell"><span class="device-dot">◈</span><div><strong>${escapeHtml(agent.label || agent.name)}</strong><small>${escapeHtml(agent.platform || 'sensor')}</small></div></div></td><td>${hop}</td><td>${toHub}</td><td>${Number(agent.deviceCount || 0)}</td><td>${load}${agent.load?.busy ? '<small class="table-secondary">busy</small>' : ''}</td><td>${timeAgo(agent.lastSeen)}</td><td><span class="${agent.online ? 'online-badge' : 'offline-badge'}">${agent.online ? 'ONLINE' : 'OFFLINE'}</span></td></tr>`;
+    return `<tr><td><div class="device-cell"><span class="device-dot">◈</span><div><strong>${escapeHtml(agent.label || agent.name)}</strong><small>${escapeHtml(agent.platform || 'sensor')}</small></div></div></td><td>${hop}</td><td>${toHub}</td><td>${Number(agent.deviceCount || 0)}</td><td>${escapeHtml(load)}${agent.load?.busy ? '<small class="table-secondary">busy</small>' : ''}</td><td>${timeAgo(agent.lastSeen)}</td><td><span class="${agent.online ? 'online-badge' : 'offline-badge'}">${agent.online ? 'ONLINE' : 'OFFLINE'}</span></td></tr>`;
   }).join('') : '<tr><td class="empty-row" colspan="7">No sensors reporting yet. Run an agent on a Pi with ROLE=agent and point it at this hub.</td></tr>';
 }
 
@@ -402,6 +409,7 @@ function render(data) {
   latest = data;
   $('connection-status').textContent = 'NAS ONLINE';
   $('connection-indicator').classList.remove('offline');
+  document.body.classList.remove('data-stale');
   renderNodes(data.nodes);
   renderAgents(data.agents);
   renderMap(data);
@@ -422,14 +430,29 @@ function render(data) {
     $('map-footer-time').textContent = `Last NAS check ${timeAgo(new Date(check.checkedAt).getTime())}`;
   }
 }
+let refreshInFlight = false;
+let lastGoodRender = 0;
+
 async function refresh() {
+  if (refreshInFlight) return;          // a slow poll must not stack up
+  refreshInFlight = true;
   try {
-    const response = await fetch(`/api/state?t=${Date.now()}`, { cache: 'no-store' });
+    const response = await fetch(`/api/state?t=${Date.now()}`, {
+      cache: 'no-store', signal: AbortSignal.timeout(8000)
+    });
     if (!response.ok) throw new Error('NAS not responding');
-    render(await response.json());
+    const data = await response.json();
+    render(data);
+    lastGoodRender = Date.now();
   } catch {
-    $('connection-status').textContent = 'NAS NOT REACHABLE';
+    const age = lastGoodRender
+      ? new Date(lastGoodRender).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
+      : null;
+    $('connection-status').textContent = age ? `NAS NOT REACHABLE · DATA FROM ${age}` : 'NAS NOT REACHABLE';
     $('connection-indicator').classList.add('offline');
+    document.body.classList.add('data-stale');
+  } finally {
+    refreshInFlight = false;
   }
 }
 function toast(message) {
@@ -441,10 +464,10 @@ async function runChecks() {
   state.checkBusy = true;
   const button = $('run-check'); button.disabled = true; button.textContent = 'Checking network…';
   try {
-    const [nasResponse, local] = await Promise.all([
-      fetch('/api/check', { method: 'POST', cache: 'no-store' }).then(response => { if (!response.ok) throw new Error('NAS check failed'); return response.json(); }),
-      measureLocalTransfer()
-    ]);
+    const nasCheck = fetch('/api/check', { method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(20000) })
+      .then(response => { if (!response.ok) throw new Error('NAS check failed'); return response.json(); });
+    const localTransfer = measureLocalTransfer().catch(() => null);
+    const [nasResponse, local] = await Promise.all([nasCheck, localTransfer]);
     let discovery = '';
     if (latest?.scan?.enabled) {
       try {
@@ -457,7 +480,9 @@ async function runChecks() {
     }
     await postNode();
     await refresh();
-    toast(`Checks complete · this device ${fmtMbps(local.downMbps)} down, ${fmtMbps(local.upMbps)} up${discovery}`);
+    toast(local
+      ? `Checks complete · this device ${fmtMbps(local.downMbps)} down, ${fmtMbps(local.upMbps)} up${discovery}`
+      : `Checks complete${discovery} · this device's speed test did not finish`);
   } catch (err) {
     await pulse(); await refresh();
     toast(`Some checks could not finish: ${err.message}`);
@@ -511,6 +536,15 @@ $('clear-offline').addEventListener('click', async () => {
 $('save-device').addEventListener('click', saveIdentity);
 $('device-name').addEventListener('keydown', event => { if (event.key === 'Enter') saveIdentity(); });
 $('run-check').addEventListener('click', runChecks);
+if (typeof ResizeObserver === 'function') {
+  let resizeTimer = null;
+  new ResizeObserver(() => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (latest) drawMapLines(); }, 120);
+  }).observe($('map-stage'));
+}
+window.addEventListener('orientationchange', () => { if (latest) drawMapLines(); });
+
 postNode();
 pulse().then(refresh);
 setInterval(pulse, 9000);

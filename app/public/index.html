@@ -22,7 +22,7 @@
     <main class="main">
       <header class="topbar">
         <div class="crumb"><span class="crumb-dot"></span> HOME NETWORK <span class="crumb-slash">/</span> LIVE MAP</div>
-        <div class="top-status"><span class="pulse-dot" id="connection-indicator"></span><span id="connection-status">CONNECTING TO NAS</span><span class="top-divider"></span><span class="lock-icon">◆</span> LAN HOSTED</div>
+        <div class="top-status"><span class="pulse-dot" id="connection-indicator"></span><span id="connection-status" aria-live="polite">CONNECTING TO NAS</span><span class="top-divider"></span><span class="lock-icon" aria-hidden="true">◆</span> LAN HOSTED</div>
       </header>
 
       <section class="page-heading">
@@ -33,7 +33,7 @@
         </div>
         <div class="heading-actions">
           <div class="last-check"><span class="mini-label">LAST CHECK</span><strong id="last-check">Waiting for first check</strong></div>
-          <button id="run-check" class="primary-button"><span class="button-spark">✳</span> Run network check <span class="button-arrow">↗</span></button>
+          <button id="run-check" class="primary-button"><span class="button-spark" aria-hidden="true">✳</span> Run network check <span class="button-arrow">↗</span></button>
         </div>
       </section>
 
@@ -65,7 +65,7 @@
             </div>
             <svg id="map-fan" class="map-fan" aria-hidden="true"></svg>
             <div class="map-leaves" id="map-leaves"></div>
-            <div class="map-caption"><span class="caption-dot"></span><span id="map-caption-text">Lines join what was actually measured. Switches, access points and the shared LAN segment between these hosts are not drawn.</span><span id="map-extra"></span></div>
+            <div class="map-caption"><span class="caption-dot" aria-hidden="true"></span><span id="map-caption-text">Lines join what was actually measured. Switches, access points and the shared LAN segment between these hosts are not drawn.</span><span id="map-extra"></span></div>
           </div>
           <div class="map-footer"><span><span class="footer-led"></span> MAP UPDATES AUTOMATICALLY</span><span id="map-footer-time">Waiting for first report</span></div>
           <div class="device-controls"><div class="device-controls-copy"><strong>This browser’s device</strong><span>Set the link type yourself; the browser cannot detect it reliably.</span></div><div class="device-controls-fields"><input id="device-name" aria-label="Name for this device" maxlength="40"><select id="connection-type" aria-label="Connection type for this device"><option>Unknown</option><option>Wi-Fi</option><option>Ethernet</option><option>Powerline</option></select><button id="save-device" class="small-button">Save device</button></div></div>
