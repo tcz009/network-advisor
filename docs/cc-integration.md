@@ -64,7 +64,8 @@ Route methods matter — the table below marks the ones that change state:
 | `/api/agents/report` | `POST`, agent intake, token required |
 | `/api/rooms` | `GET` returns `{mac-or-ip: room}`; `PUT` sets one, requires `x-advisor-intent: write` |
 
-Recommended for a collector: `/api/state`, polled every 60 s, 5 s timeout.
+Recommended for a collector: `/api/state`, polled every 60 s with a **20 s timeout**. A
+sweep takes about 11 s, so anything under 15 s will time out on the polls that follow one.
 
 ---
 
@@ -82,6 +83,10 @@ omitted, but nested values may be `null`.
   "gateway": "192.168.1.1",                // LAN default route, null if none
   "iface": "eno1",
   "load": { "load1": 2.29, "cores": 4, "ratio": 0.57, "busy": false },
+
+  // Beside the payload, not inside it: `check` stays null until a result exists.
+  "checkMeta": { "ageMs": 4200, "stale": false, "running": false },
+  "sweep": { "startedAt": 1794831940811, "finishedAt": 1794831950811, "running": false, "enabled": true },
 
   "check": {                               // null until the first check completes
     "checkedAt": "2026-11-16T08:37:59.334Z",   // ISO-8601 UTC — use this for data age
@@ -203,6 +208,11 @@ Suggested verdict:
 | `check.router.lossPct > 0` | `warning` |
 | `check.router.avgMs > NETWORK_ADVISOR_ROUTER_WARN_MS` (default 20) | `warning` |
 | any device with `responded === false` | **not** a warning by itself; a battery camera or sleeping phone is expected to miss a sweep |
+| `checkMeta.stale` | carry the payload but mark its age, per CC's stale-row rule |
+
+`checkMeta.stale` is true when no check exists yet or the last one is older than 60 s — the
+same threshold that triggers a background refresh. `checkMeta.running` says a check is in
+flight now, and `sweep.startedAt`/`running` does the same for a discovery sweep.
 | `check.dns.ok === false` | `warning` |
 | `load.busy === true` | **`ok` with an info note, never a warning** — see caveat 2 |
 

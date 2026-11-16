@@ -479,6 +479,16 @@ test('HTTP endpoints behave under attack and normal use', async t => {
     assert.equal(badMac.status, 400);
   });
 
+  await t.test('state exposes check freshness and sweep state beside the payload', async () => {
+    const state = await (await fetch(`${base}/api/state`)).json();
+    assert.ok(state.checkMeta, 'checkMeta missing');
+    assert.equal(typeof state.checkMeta.stale, 'boolean');
+    assert.equal(typeof state.checkMeta.running, 'boolean');
+    assert.ok(state.sweep, 'sweep missing');
+    assert.equal(typeof state.sweep.enabled, 'boolean');
+    assert.ok('startedAt' in state.sweep);
+  });
+
   await t.test('history endpoint answers with an array', async () => {
     const response = await fetch(`${base}/api/history`);
     assert.equal(response.status, 200);

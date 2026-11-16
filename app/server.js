@@ -1077,6 +1077,7 @@ async function handle(req, res) {
       runCheck().catch(err => console.error('Background check failed:', err.message));
     }
     const now = Date.now();
+    const checkAgeMs = lastCheck ? now - new Date(lastCheck.checkedAt).getTime() : null;
     const activeNodes = Object.values(nodes).map(node => ({ ...node, online: now - node.lastSeen < 25_000 }));
     const gateway = readGateway();
     const subnet = parseCidr(SCAN_SUBNET);
@@ -1089,6 +1090,20 @@ async function handle(req, res) {
       iface: gateway?.iface || null,
       load: readLoad(),
       check: lastCheck,
+      // `check` stays null until the first result, so freshness lives beside it
+      // rather than inside it: consumers can tell "previous result while a new
+      // check runs" from "a check is in progress" without date arithmetic.
+      checkMeta: {
+        ageMs: checkAgeMs,
+        stale: checkAgeMs === null || checkAgeMs > 60_000,
+        running: Boolean(checkInFlight)
+      },
+      sweep: {
+        startedAt: lastScanStartedAt || null,
+        finishedAt: lastScan ? lastScan.finishedAt : null,
+        running: Boolean(scanInFlight),
+        enabled: Boolean(parseCidr(SCAN_SUBNET))
+      },
       nodes: activeNodes,
       agents: activeAgents(),
       devices: mergedDevices(),
