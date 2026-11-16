@@ -401,7 +401,10 @@ function renderArp(devices) {
   setMetric('seen-count', rows.length, 'devices');
   renderRooms(rows);
   $('arp-list').innerHTML = rows.length ? rows.slice(0, 12).map(item => {
-    const title = item.hostname || item.label || 'Unidentified device';
+    const fullName = item.hostname || item.label || 'Unidentified device';
+    // Same shortening as the map chips: the first label is what a person says.
+    const dot = fullName.indexOf('.');
+    const title = dot > 0 ? fullName.slice(0, dot) : fullName;
     const detail = [item.ip, item.mac].filter(Boolean).join(' · ');
     const vendor = item.hostname && item.label ? item.label : null;
     const seenBy = Array.isArray(item.seenBy) && item.seenBy.length > 1
@@ -409,7 +412,7 @@ function renderArp(devices) {
     const liveness = item.responded === false ? 'not responding to the last sweep' : '';
     const latency = typeof item.sweepMs === 'number' ? fmtMs(item.sweepMs) : '';
     const secondary = [item.kind, vendor, latency, item.note, seenBy, liveness].filter(Boolean).join(' · ');
-    return `<div class="arp-row"><span>${escapeHtml(title)}</span><code>${escapeHtml(detail)}</code><input class="room-input" data-mac="${escapeHtml(item.mac)}" value="${escapeHtml(item.room || '')}" placeholder="room" aria-label="Room for ${escapeHtml(title)}">${secondary ? `<small class="table-secondary">${escapeHtml(secondary)}</small>` : ''}</div>`;
+    return `<div class="arp-row"><span title="${escapeHtml(fullName)}">${escapeHtml(title)}</span><code>${escapeHtml(detail)}</code><input class="room-input" data-mac="${escapeHtml(item.mac)}" value="${escapeHtml(item.room || '')}" placeholder="room" aria-label="Room for ${escapeHtml(title)}">${secondary ? `<small class="table-secondary">${escapeHtml(secondary)}</small>` : ''}</div>`;
   }).join('') : '<p class="muted-copy">No recent neighbour entries. Devices appear here after the NAS has communicated with them.</p>';
 }
 
