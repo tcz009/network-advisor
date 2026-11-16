@@ -123,6 +123,26 @@ function renderFindings(data) {
   else if (check.internet.lossPct > 0) items.push({ kind: 'warning', icon: '!', title: 'Some internet test packets were lost', text: `${check.internet.lossPct}% of pings to ${escapeHtml(check.target)} were unanswered. Repeat the check to see whether this is persistent.` });
   else items.push({ kind: 'good', icon: '✓', title: 'Internet test point replied', text: `Average response was ${fmtMs(check.internet.avgMs)} from the NAS. This is latency, not an internet download-speed test.` });
   if (!check.dns?.ok) items.push({ kind: 'warning', icon: '!', title: 'DNS lookup failed', text: `The NAS could not look up ${escapeHtml(check.hostname)} during this check.` });
+  const powerline = data.powerline;
+  if (powerline && powerline.ok && Array.isArray(powerline.adapters) && powerline.adapters.length > 1) {
+    const peers = powerline.adapters.filter(adapter => !adapter.local);
+    const viaPeer = peers.find(adapter => adapter.behindIp === check.gateway);
+    const rate = powerline.bestTxMbps;
+    if (viaPeer) {
+      items.push({
+        kind: 'info', icon: '≡',
+        title: 'The router is reached over powerline',
+        text: `The NAS reaches ${escapeHtml(check.gateway)} through a powerline adapter${rate ? ` running at ${rate} Mb/s PHY` : ''}. That is a shared mains link, not a direct cable, so local latency and throughput are limited by it.`
+      });
+    }
+    if (rate && rate < 120) {
+      items.push({
+        kind: 'warning', icon: '!',
+        title: 'Powerline link is slow',
+        text: `The fastest powerline link is ${rate} Mb/s PHY. Check that neither adapter is on a power strip or surge protector, and that standby mode is disabled.`
+      });
+    }
+  }
   const offline = (data.nodes || []).filter(node => !node.online).length;
   if (offline) items.push({ kind: 'info', icon: '·', title: `${offline} saved device${offline === 1 ? '' : 's'} not reporting now`, text: 'A device is marked offline when its browser has not checked in recently. It may simply have closed the dashboard.' });
   $('findings').innerHTML = items.map(item => `<div class="finding ${item.kind}"><span class="finding-icon">${item.icon}</span><div><strong>${item.title}</strong><p>${item.text}</p></div></div>`).join('');
