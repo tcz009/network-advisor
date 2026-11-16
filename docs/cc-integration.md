@@ -4,8 +4,27 @@
 Network Advisor (NA) lives in this repository and is maintained separately; the CC
 owner implements any integration on their side.
 
-Written against NA `0.2.0` on `main` (the version bump landed in `0f052b1`; the
-integration work merged as `93f602f`). Point CC at `main` rather than a branch.
+Written against NA `0.2.0` on `main`. Point CC at `main` rather than a branch.
+
+## What changed since the first version of this document
+
+The endpoint still returns one `/api/state` payload, but a device now carries much
+more than an address, and there are new routes:
+
+| Change | Detail |
+|---|---|
+| `ip`, `mac`, `hostname`, `label`, `seenBy` | unchanged |
+| **`kind`** | device type: `camera`, `plug`, `switch`, `speaker`, `bulb`, `media player`, `IR blaster`, `watch`, `phone`, `computer`, `printer`, `NAS`, `DNS server`, `access point`, `router`, or `null` |
+| **`room`** | operator-assigned room, or `null` |
+| **`responded` / `sweepMs`** | whether the last sweep got a reply, and its round-trip in ms; absent until a sweep has run |
+| **`kasa`** | `{confirmed, model, alias}` for TP-Link Kasa devices found on TCP 9999 |
+| **`mdns` / `upnp`** | broadcast identity: mDNS name and service types, SSDP server string |
+| **`note`** | operator note (`DEVICE_NOTES`) |
+| **`PUT /api/rooms`** | writes a room, `{key, room}` where key is a MAC or an address |
+
+Read-only consumers can ignore all of it; the fields are additive. A sweep now
+takes about 11 seconds rather than 8, because it also probes TCP 9999 and listens
+for SSDP/mDNS.
 
 ---
 
@@ -43,6 +62,7 @@ Route methods matter — the table below marks the ones that change state:
 | `/api/nodes` | `POST`, registers a browser device |
 | `/api/nodes/<id>` | `DELETE`, requires an `x-advisor-intent: delete` header |
 | `/api/agents/report` | `POST`, agent intake, token required |
+| `/api/rooms` | `GET` returns `{mac-or-ip: room}`; `PUT` sets one, requires `x-advisor-intent: write` |
 
 Recommended for a collector: `/api/state`, polled every 60 s, 5 s timeout.
 
@@ -106,12 +126,35 @@ omitted, but nested values may be `null`.
 
   "devices": [                             // merged across vantage points, deduped by IP
     {
-      "ip": "192.168.1.2",
-      "mac": "b8:27:eb:50:e4:11",
+      "ip": "192.168.1.40",
+      "mac": "b0:be:76:d6:cc:b7",
       "iface": "eno1",
-      "label": "Raspberry Pi",             // curated MAC vendor, or "Randomised MAC", or null
-      "hostname": "pi.hole",               // reverse DNS, may be null
-      "seenBy": ["thinkomv", "MediaPi", "vpngate"]
+      "label": "TP-Link",                  // curated MAC vendor, or "Randomised MAC", or null
+      "hostname": null,                    // reverse DNS, may be null
+      "seenBy": ["thinkomv", "MediaPi"],
+      "kind": "plug",                      // inferred type, or null
+      "room": "Loft",                      // operator-assigned, or null
+      "note": null,                        // operator note, or null
+      "responded": true,                   // last sweep got a reply (absent if no sweep yet)
+      "sweepMs": 22.4,                     // round-trip from that sweep
+      "kasa": { "confirmed": true, "model": "HS100(UK)", "alias": "Loft light" },
+      "mdns": null,
+      "upnp": null
+    },
+    {
+      "ip": "192.168.1.80",
+      "mac": "78:28:ca:cc:50:8c",
+      "label": "Sonos",
+      "hostname": "SonosZP.communityfibre.co.uk",
+      "seenBy": ["thinkomv"],
+      "kind": "speaker",
+      "room": null,
+      "note": null,
+      "responded": true,
+      "sweepMs": 19.5,
+      "kasa": null,
+      "mdns": { "name": "SonosZP", "services": ["sonos", "spotify-connect"] },
+      "upnp": { "server": "Linux UPnP/1.0 Sonos/98.0-82170 (ZPS13)", "location": "http://192.168.1.80:1400/xml/device_description.xml", "serviceTypes": ["urn:schemas-upnp-org:device:ZonePlayer:1"] }
     }
   ],
 
@@ -159,6 +202,7 @@ Suggested verdict:
 | Any `agents[].online === false` | `warning` |
 | `check.router.lossPct > 0` | `warning` |
 | `check.router.avgMs > NETWORK_ADVISOR_ROUTER_WARN_MS` (default 20) | `warning` |
+| any device with `responded === false` | **not** a warning by itself; a battery camera or sleeping phone is expected to miss a sweep |
 | `check.dns.ok === false` | `warning` |
 | `load.busy === true` | **`ok` with an info note, never a warning** — see caveat 2 |
 
