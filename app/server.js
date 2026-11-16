@@ -524,21 +524,52 @@ function ping(host) {
     });
 }
 
-function hostnameFor(ip) {
+// The container's resolver is not always the LAN resolver, so a PTR that the
+// router answers happily can come back empty. Ask the gateway explicitly too.
+function reverseVia(server, ip, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const resolver = new dns.promises.Resolver({ timeout: timeoutMs, tries: 1 });
+    try {
+      resolver.setServers([server]);
+    } catch (err) {
+      return reject(err);
+    }
+    resolver.reverse(ip).then(names => {
+      resolve(names && names.length ? String(names[0]).replace(/\.$/, '') : null);
+    }).catch(reject);
+  });
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms).unref())
+  ]);
+}
+
+async function hostnameFor(ip) {
   const cached = HOST_CACHE.get(ip);
   const now = Date.now();
-  if (cached && now - cached.at < 10 * 60_000) return Promise.resolve(cached.name);
-  return Promise.race([
-    dns.promises.reverse(ip),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 700).unref())
-  ]).then(names => {
-    const name = names && names.length ? String(names[0]).replace(/\.$/, '') : null;
-    HOST_CACHE.set(ip, { name, at: now });
-    return name;
-  }).catch(() => {
-    HOST_CACHE.set(ip, { name: null, at: now });
-    return null;
-  });
+  // A positive name is stable; a negative one may simply be a slow resolver.
+  if (cached && now - cached.at < (cached.name ? 10 * 60_000 : 2 * 60_000)) return cached.name;
+
+  let name = null;
+  try {
+    const names = await withTimeout(dns.promises.reverse(ip), 700);
+    name = names && names.length ? String(names[0]).replace(/\.$/, '') : null;
+  } catch { /* fall through to the gateway */ }
+
+  if (!name) {
+    const gateway = readGateway()?.address;
+    if (gateway) {
+      try {
+        name = await reverseVia(gateway, ip, 900);
+      } catch { /* no name after all */ }
+    }
+  }
+
+  HOST_CACHE.set(ip, { name, at: now });
+  return name;
 }
 
 async function enrichDevices(devices) {
