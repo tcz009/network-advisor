@@ -873,7 +873,12 @@ function mergeDevices(nasDevices, agentMap, { now = Date.now(), ttlMs = AGENT_DE
 }
 
 function mergedDevices() {
-  const merged = mergeDevices(lastCheck?.arp, agents);
+  // The sweep snapshot is fresher than the last check's, and it carries the
+  // liveness and Kasa annotations, so use whichever ran most recently.
+  const checkAt = lastCheck ? new Date(lastCheck.checkedAt).getTime() : 0;
+  const scanAt = lastScan ? lastScan.finishedAt : 0;
+  const base = scanAt > checkAt ? lastScan.arp : (lastCheck?.arp || []);
+  const merged = mergeDevices(base, agents);
   if (!sweepResponders.size) return merged;
   return merged.map(device => {
     const kasa = kasaByIp.get(device.ip) || null;
