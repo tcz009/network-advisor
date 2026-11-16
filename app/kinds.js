@@ -17,7 +17,9 @@ const RULES = [
   { kind: 'phone', pattern: /iphone|android|pixel|galaxy|oneplus/i },
   { kind: 'computer', pattern: /macbook|imac|mac ?mini|thinkpad|desktop|laptop/i },
   { kind: 'printer', pattern: /printer|brother|hp-?officejet|epson/i },
-  { kind: 'nas', pattern: /nas|synology|qnap|openmediavault/i },
+  { kind: 'NAS', pattern: /nas|synology|qnap|openmediavault|thinkomv/i },
+  { kind: 'DNS server', pattern: /pihole|pi\.hole/i },
+  { kind: 'access point', pattern: /vpngate|openwrt|hostapd/i },
   { kind: 'sensor', pattern: /sensor|thermostat|hive|nest/i },
   { kind: 'router', pattern: /router|gateway|hub|community01670/i }
 ];
