@@ -171,27 +171,27 @@ EOS
 verify_fleet() {
   log "waiting for reports"
   sleep 20
-  curl -fsS --max-time 10 "$HUB/api/agents" | python3 -c '
-import json, sys
+  # The expected list is passed through the environment: the python snippet is
+  # single-quoted, so ${...} inside it would never expand.
+  curl -fsS --max-time 10 "$HUB/api/agents" \
+    | EXPECTED_AGENTS="${EXPECTED_AGENTS:-MediaPi,RPiHole,vpngate}" python3 -c '
+import json, os, sys
 data = json.load(sys.stdin)
 agents = data["agents"]
-bad = 0
+expected = set(filter(None, (name.strip() for name in os.environ["EXPECTED_AGENTS"].split(","))))
 for agent in agents:
     hop = agent["gateway"] or (agent.get("vpn") or {}).get("address") or "none"
     print("  %-9s v%-6s hop %-14s devices %-3s online %s" % (
         agent["label"], agent["version"], hop, agent["deviceCount"], agent["online"]))
-    bad += 0 if agent["online"] else 1
-expected = set(filter(None, ("${EXPECTED_AGENTS:-MediaPi,RPiHole,vpngate}").split(",")))
-seen = {agent["label"] for agent in agents if agent["online"]}
-missing = sorted(expected - seen)
 if not agents:
     print("  no sensors reported at all", file=sys.stderr)
     sys.exit(1)
+online = {agent["label"] for agent in agents if agent["online"]}
+missing = sorted(expected - online)
 if missing:
     print("  FAILED: sensors not reporting: %s" % ", ".join(missing), file=sys.stderr)
     sys.exit(2)
 '
-
 }
 
 deploy() {
