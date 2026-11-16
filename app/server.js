@@ -78,21 +78,34 @@ const HOST_CACHE = new Map();
 
 /* ------------------------------------------------------------------ helpers */
 
-function hostAllowed(hostHeader) {
-  const raw = String(hostHeader || '').trim().toLowerCase();
-  if (!raw) return false;
-  let name = raw;
+const ALLOWED_HOST_NAMES = ALLOWED_HOSTS.map(entry => entry.replace(/:\d+$/, '').replace(/\.$/, ''));
+
+function normaliseHostName(hostHeader) {
+  let name = String(hostHeader || '').trim().toLowerCase();
+  if (!name) return '';
   if (name.startsWith('[')) {
     const end = name.indexOf(']');
-    if (end === -1) return false;
+    if (end === -1) return '';
     name = name.slice(0, end + 1);
   } else {
     name = name.split(':')[0];
   }
+  return name.replace(/\.$/, '');   // "nas.local." is the same host as "nas.local"
+}
+
+function hostAllowed(hostHeader) {
+  const name = normaliseHostName(hostHeader);
+  if (!name) return false;
   if (name === 'localhost' || name === '127.0.0.1' || name === '[::1]') return true;
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(name)) return true;
-  if (/^\[[0-9a-f:.]+\]$/.test(name)) return true;
-  return ALLOWED_HOSTS.includes(name);
+  if (/^\[[0-9a-f:.%]+\]$/.test(name)) return true;
+  return ALLOWED_HOST_NAMES.includes(name);
+}
+
+// Keys are normalised the same way a report's name is, so "Media Pi" in the
+// config matches the "Media-Pi" that arrives on the wire.
+function sanitiseAgentName(value) {
+  return cleanText(value, 40).replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
 function parseAgentTokens(raw) {
@@ -102,7 +115,7 @@ function parseAgentTokens(raw) {
     if (!trimmed) continue;
     const split = trimmed.indexOf('=');
     if (split < 1) continue;
-    const name = trimmed.slice(0, split).trim();
+    const name = sanitiseAgentName(trimmed.slice(0, split));
     const token = trimmed.slice(split + 1).trim();
     if (name && token) map[name] = token;
   }
@@ -385,6 +398,11 @@ function ping(host) {
       // it as one made every host look down.
       if (err.code === 'ENOENT' || err.code === 'EACCES') {
         return { ok: false, reachable: false, avgMs: null, lossPct: null, error: `ping unavailable (${err.code})` };
+      }
+      // An installed ping that cannot open a socket exits 2 with a permission
+      // message; reporting that as "no reply" blames the network.
+      if (/operation not permitted|permission denied/i.test(String(err.stderr || ''))) {
+        return { ok: false, reachable: false, avgMs: null, lossPct: null, error: 'ping unavailable (EPERM)' };
       }
       // ping exits non-zero when any probe is lost, and its stdout can still
       // hold valid replies worth keeping.
@@ -677,6 +695,7 @@ async function runScan() {
     const sweep = await pingSweep(parsed.hosts);
     const gateway = readGateway();
     const devices = await enrichDevices(neighbourDevices(readArpTable(), gateway?.iface));
+    lastScanStartedAt = Date.now();   // the pause counts from the end of a sweep
     lastScan = {
       enabled: true,
       error: sweep.error,
@@ -876,7 +895,12 @@ async function handle(req, res) {
   if (!hostAllowed(req.headers.host)) {
     return json(res, 421, { error: 'Host not allowed; set ALLOWED_HOSTS for DNS names' });
   }
-  const reqUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+  let reqUrl;
+  try {
+    reqUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+  } catch {
+    return json(res, 421, { error: 'Malformed Host header' });
+  }
 
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin) {
     try {
@@ -927,7 +951,8 @@ async function handle(req, res) {
   }
 
   if (reqUrl.pathname === '/api/agents' && req.method === 'GET') {
-    return json(res, 200, { agents: activeAgents(), onlineWindowMs: AGENT_ONLINE_MS, intake: Boolean(AGENT_TOKEN) });
+    const intake = Boolean(AGENT_TOKEN) || Object.keys(AGENT_TOKENS).length > 0;
+    return json(res, 200, { agents: activeAgents(), onlineWindowMs: AGENT_ONLINE_MS, intake });
   }
 
   if (reqUrl.pathname === '/api/agents/report' && req.method === 'POST') {
@@ -937,7 +962,7 @@ async function handle(req, res) {
     }
     try {
       const body = await readBody(req, 512 * 1024);
-      const claimed = cleanText(body && body.name, 40).replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
+      const claimed = sanitiseAgentName(body && body.name);
       const expected = perAgent ? AGENT_TOKENS[claimed] : AGENT_TOKEN;
       if (!expected || (!perAgent && !agentTokenMatches(req.headers['x-advisor-token'], expected)) ||
           (perAgent && !agentTokenMatches(req.headers['x-advisor-token'], expected))) {
@@ -1126,6 +1151,8 @@ if (require.main === module) {
       console.warn('Agent intake is disabled (no AGENT_TOKEN / AGENT_TOKENS).');
     } else if (AGENT_TOKEN && !Object.keys(AGENT_TOKENS).length) {
       console.warn('Using one shared AGENT_TOKEN: any holder can change any sensor. Prefer AGENT_TOKENS=name=token,...');
+    } else if (AGENT_TOKEN && Object.keys(AGENT_TOKENS).length) {
+      console.warn('Both AGENT_TOKEN and AGENT_TOKENS are set: AGENT_TOKEN is ignored, each sensor needs its own entry.');
     }
   }
 }

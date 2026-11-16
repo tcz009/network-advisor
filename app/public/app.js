@@ -1,4 +1,15 @@
 const $ = (id) => document.getElementById(id);
+
+// AbortSignal.timeout is newer than some browsers people actually use. Fall
+// back to a controller so a missing API cannot stop every fetch.
+function timeoutSignal(ms) {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(ms);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
 const storageKey = 'network-advisor-device-v1';
 let latest = null;
 const state = { id: null, name: '', connection: 'Unknown', rtt: null, downMbps: null, upMbps: null, speedCheckedAt: null, checkBusy: false };
@@ -48,7 +59,7 @@ async function postNode() {
     const response = await fetch('/api/nodes', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
       body: JSON.stringify({ id: state.id, name: state.name, connection: state.connection, deviceType: detectDevice(), browserRttMs: state.rtt, downMbps: state.downMbps, upMbps: state.upMbps, speedCheckedAt: state.speedCheckedAt }),
-      signal: AbortSignal.timeout(8000)
+      signal: timeoutSignal(8000)
     });
     return response.ok;
   } catch { return false; }   // offline or the NAS is restarting
@@ -438,7 +449,7 @@ async function refresh() {
   refreshInFlight = true;
   try {
     const response = await fetch(`/api/state?t=${Date.now()}`, {
-      cache: 'no-store', signal: AbortSignal.timeout(8000)
+      cache: 'no-store', signal: timeoutSignal(8000)
     });
     if (!response.ok) throw new Error('NAS not responding');
     const data = await response.json();
@@ -464,7 +475,7 @@ async function runChecks() {
   state.checkBusy = true;
   const button = $('run-check'); button.disabled = true; button.textContent = 'Checking network…';
   try {
-    const nasCheck = fetch('/api/check', { method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(20000) })
+    const nasCheck = fetch('/api/check', { method: 'POST', cache: 'no-store', signal: timeoutSignal(20000) })
       .then(response => { if (!response.ok) throw new Error('NAS check failed'); return response.json(); });
     const localTransfer = measureLocalTransfer().catch(() => null);
     const [nasResponse, local] = await Promise.all([nasCheck, localTransfer]);

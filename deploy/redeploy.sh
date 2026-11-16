@@ -37,7 +37,13 @@ trap 'echo "FAILED at line $LINENO" >&2' ERR
 log() { echo "--- $* ---"; }
 
 current_sha() { tail -n 1 "$STATE_DIR/history" 2>/dev/null || true; }
-previous_sha() { tail -n 2 "$STATE_DIR/history" 2>/dev/null | head -n 1 || true; }
+
+# Newest recorded deployment that is not the one running now.
+previous_sha() {
+  local current
+  current=$(current_sha)
+  tac "$STATE_DIR/history" 2>/dev/null | grep -v -x -F "${current:-none}" | head -n 1 || true
+}
 
 checkout_ref() {
   local ref="$1" target
@@ -106,15 +112,24 @@ if [ ! -f /etc/network-advisor-agent.env ]; then
   echo "WARNING: /etc/network-advisor-agent.env is missing; the unit will not start" >&2
 fi
 chmod 600 /etc/network-advisor-agent.env 2>/dev/null || true
+cp /etc/systemd/system/network-advisor-agent.service /tmp/na-agent.service.prev 2>/dev/null || true
 systemctl daemon-reload
 mv /opt/network-advisor-agent /opt/network-advisor-agent.prev 2>/dev/null || true
 mv "$stage" /opt/network-advisor-agent
 (systemctl restart network-advisor-agent && sleep 8) || true
 if ! systemctl is-active --quiet network-advisor-agent; then
-  echo "agent failed to start; restoring previous tree" >&2
+  echo "agent failed to start; restoring previous tree and unit" >&2
   rm -rf /opt/network-advisor-agent
   mv /opt/network-advisor-agent.prev /opt/network-advisor-agent 2>/dev/null || true
+  if [ -f /tmp/na-agent.service.prev ]; then
+    install -m 644 /tmp/na-agent.service.prev /etc/systemd/system/network-advisor-agent.service
+    systemctl daemon-reload
+  fi
   systemctl restart network-advisor-agent || true
+  sleep 5
+  if ! systemctl is-active --quiet network-advisor-agent; then
+    echo "RESTORE FAILED: network-advisor-agent is not running" >&2
+  fi
   exit 1
 fi
 rm -rf /opt/network-advisor-agent.prev
@@ -137,11 +152,11 @@ install -m 700 /tmp/na-run.sh "\$stage/run.sh"
 rm -rf "$VPNGATE_DIR.prev"
 mv "$VPNGATE_DIR" "$VPNGATE_DIR.prev"
 mv "\$stage" "$VPNGATE_DIR"
-pkill -f 'network-advisor-agent/server.js' || true
+pkill -f "$VPNGATE_DIR/server.js" || true
 sleep 2
 nohup "$VPNGATE_DIR/run.sh" >> "$VPNGATE_DIR/agent.log" 2>&1 &
 sleep 10
-if ! pgrep -f 'network-advisor-agent/server.js' >/dev/null; then
+if ! pgrep -f "$VPNGATE_DIR/server.js" >/dev/null; then
   echo "vpngate agent did not start; restoring" >&2
   rm -rf "$VPNGATE_DIR"
   mv "$VPNGATE_DIR.prev" "$VPNGATE_DIR"
@@ -166,11 +181,15 @@ for agent in agents:
     print("  %-9s v%-6s hop %-14s devices %-3s online %s" % (
         agent["label"], agent["version"], hop, agent["deviceCount"], agent["online"]))
     bad += 0 if agent["online"] else 1
+expected = set(filter(None, ("${EXPECTED_AGENTS:-MediaPi,RPiHole,vpngate}").split(",")))
+seen = {agent["label"] for agent in agents if agent["online"]}
+missing = sorted(expected - seen)
 if not agents:
     print("  no sensors reported at all", file=sys.stderr)
     sys.exit(1)
-if bad:
-    print("  WARNING: %d sensor(s) offline" % bad, file=sys.stderr)
+if missing:
+    print("  FAILED: sensors not reporting: %s" % ", ".join(missing), file=sys.stderr)
+    sys.exit(2)
 '
 
 }
@@ -183,11 +202,16 @@ deploy() {
   BUNDLE=$(bundle_app "$sha")
   echo "bundle: $BUNDLE"
   build_hub "$sha"
-  install_systemd_agent "$MEDIAPI_HOST" root "$PI_KEYS" MediaPi || exit 1
-  install_systemd_agent "$RPIHOLE_HOST" pi "$RPIHOLE_KEY" RPiHole || exit 1
-  install_vpngate_agent || exit 1
+  # Plain calls: putting these behind `|| exit 1` would disable errexit inside
+  # the functions, so a failed scp could go unnoticed.
+  install_systemd_agent "$MEDIAPI_HOST" root "$PI_KEYS" MediaPi
+  install_systemd_agent "$RPIHOLE_HOST" pi "$RPIHOLE_KEY" RPiHole
+  install_vpngate_agent
   verify_fleet
-  echo "$sha" >> "$STATE_DIR/history"
+  # Record once; a repeated deploy of the same SHA must not poison rollback.
+  if [ "$(current_sha)" != "$sha" ]; then
+    echo "$sha" >> "$STATE_DIR/history"
+  fi
   echo "=== deployed $sha at $(date -Is) ==="
 }
 

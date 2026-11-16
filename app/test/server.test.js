@@ -239,6 +239,16 @@ test('hostAllowed accepts address literals and rejects stray DNS names', () => {
   }
 });
 
+test('hostAllowed tolerates a trailing dot and a port in the allow-list', () => {
+  assert.equal(advisor.hostAllowed('192.168.1.179.:8090'), true);
+  assert.equal(advisor.hostAllowed('192.168.1.179:8090'), true);
+});
+
+test('parseAgentTokens normalises names the way reports do', () => {
+  const parsed = advisor.parseAgentTokens('Media Pi=abc');
+  assert.deepEqual(Object.keys(parsed), ['Media-Pi']);
+});
+
 test('parseAgentTokens reads name=token pairs and ignores rubbish', () => {
   const parsed = advisor.parseAgentTokens('MediaPi=aaa,vpngate=bbb, ,broken,nokey=');
   assert.deepEqual(Object.keys(parsed).sort(), ['MediaPi', 'vpngate']);

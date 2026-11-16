@@ -40,4 +40,6 @@ else
 fi
 
 cd "$(dirname "$0")" || exit 1
-exec "$exec_node" server.js
+# Absolute path on purpose: supervisors and the deploy script match on
+# "network-advisor-agent/server.js", which a bare "server.js" would not match.
+exec "$exec_node" "$(pwd)/server.js"
