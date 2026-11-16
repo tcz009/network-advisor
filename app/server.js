@@ -1168,6 +1168,29 @@ async function handle(req, res) {
     }
   }
 
+  if (reqUrl.pathname === '/api/export' && req.method === 'GET') {
+    // Secret-free snapshot: no tokens, no agent env, nothing that grants access.
+    return json(res, 200, {
+      app: 'Network Advisor',
+      version: VERSION,
+      exportedAt: new Date().toISOString(),
+      host: os.hostname(),
+      gateway: readGateway()?.address || null,
+      devices: mergedDevices(),
+      agents: activeAgents(),
+      rooms,
+      history: history.slice(-60),
+      lldp: lldpNeighbours(),
+      config: {
+        scanSubnet: SCAN_SUBNET || null,
+        kasaProbe: KASA_PROBE,
+        discovery: DISCOVERY,
+        lldp: LLDP_ENABLED,
+        agentIntake: Boolean(AGENT_TOKEN) || Object.keys(AGENT_TOKENS).length > 0
+      }
+    });
+  }
+
   if (reqUrl.pathname === '/api/history' && req.method === 'GET') {
     return json(res, 200, { records: history, limit: HISTORY_LIMIT });
   }

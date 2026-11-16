@@ -89,7 +89,7 @@ curl -X PUT http://192.168.1.179:8090/api/rooms \
   -d '{"mac":"b0:be:76:d6:cc:b7","room":"Loft"}'
 ```
 
-Rooms live in `rooms.json` in the data volume. They are keyed by MAC because DHCP moves addresses, which means a device that randomises its MAC (a phone on a privacy setting) needs its room setting again after it rotates.
+Clicking a room pill filters the list to that room (click it again to clear). Rooms live in `rooms.json` in the data volume. They are keyed by MAC because DHCP moves addresses, which means a device that randomises its MAC (a phone on a privacy setting) needs its room setting again after it rotates.
 
 Devices the network cannot fully describe can carry an operator note (`DEVICE_NOTES`), which shows on the map and in the device list — useful for a hub that fronts equipment with no IP of its own.
 
@@ -187,6 +187,7 @@ Device labels and measurements are stored in the named Docker volume `network-ad
 | `/api/nodes/<id>` | DELETE | Forget a device (requires `x-advisor-intent: delete`) |
 | `/api/speed/download` | GET | Transfer a fixed-size body for the local speed test |
 | `/api/speed/upload` | POST | Receive up to 2 MiB for the local speed test |
+| `/api/export` | GET | Secret-free JSON snapshot: devices, rooms, agents, history, LLDP |
 | `/api/rooms` | GET / PUT | Read room labels, or set one with `{mac, room}` (requires `x-advisor-intent: write`) |
 | `/api/pulse` | GET | Liveness only; no side effects |
 

@@ -489,6 +489,17 @@ test('HTTP endpoints behave under attack and normal use', async t => {
     assert.ok('startedAt' in state.sweep);
   });
 
+  await t.test('export returns a snapshot without secrets', async () => {
+    const response = await fetch(`${base}/api/export`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    for (const key of ['app', 'version', 'exportedAt', 'devices', 'agents', 'rooms', 'config']) {
+      assert.ok(key in body, `export missing ${key}`);
+    }
+    const text = JSON.stringify(body);
+    assert.doesNotMatch(text, /ADVISOR_TOKEN|api[_-]?key|password/i);
+  });
+
   await t.test('history endpoint answers with an array', async () => {
     const response = await fetch(`${base}/api/history`);
     assert.equal(response.status, 200);

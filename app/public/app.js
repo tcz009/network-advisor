@@ -12,6 +12,7 @@ function timeoutSignal(ms) {
 }
 const storageKey = 'network-advisor-device-v1';
 let latest = null;
+let roomFilter = null;
 const state = { id: null, name: '', connection: 'Unknown', rtt: null, downMbps: null, upMbps: null, speedCheckedAt: null, checkBusy: false };
 
 function escapeHtml(value) {
@@ -400,8 +401,15 @@ function renderRooms(devices) {
   }
   const pills = [...counts.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([room, count]) => `<span class="room-pill">${escapeHtml(room)} <b>${count}</b></span>`);
-  if (unassigned) pills.push(`<span class="room-pill unassigned">unassigned <b>${unassigned}</b></span>`);
+    .map(([room, count]) => {
+      const active = roomFilter === room ? ' active' : '';
+      return `<button class="room-pill${active}" data-room="${escapeHtml(room)}" type="button">${escapeHtml(room)} <b>${count}</b></button>`;
+    });
+  if (unassigned) {
+    const active = roomFilter === '' ? ' active' : '';
+    pills.push(`<button class="room-pill unassigned${active}" data-room="" type="button">unassigned <b>${unassigned}</b></button>`);
+  }
+  if (roomFilter !== null) pills.push('<button class="room-pill clear" data-room="__all" type="button">show all</button>');
   $('rooms-summary').innerHTML = pills.join('');
 }
 
@@ -426,11 +434,27 @@ function renderUpstream(lldp) {
   }).join('');
 }
 
+function ipSort(a, b) {
+  const toNumber = ip => ip.split('.').reduce((total, part) => total * 256 + Number(part || 0), 0);
+  return toNumber(a.ip) - toNumber(b.ip);
+}
+
 function renderArp(devices) {
-  const rows = devices || [];
-  setMetric('seen-count', rows.length, 'devices');
-  renderRooms(rows);
-  $('arp-list').innerHTML = rows.length ? rows.slice(0, 12).map(item => {
+  const all = devices || [];
+  setMetric('seen-count', all.length, 'devices');
+  renderRooms(all);
+
+  // Roomed devices first, grouped by room; unassigned last, each group by IP.
+  const filtered = roomFilter === null
+    ? all
+    : all.filter(item => (roomFilter === '' ? !item.room : item.room === roomFilter));
+  const rows = [...filtered].sort((a, b) => {
+    const roomA = a.room || '\uffff';
+    const roomB = b.room || '\uffff';
+    return roomA.localeCompare(roomB) || ipSort(a, b);
+  });
+
+  $('arp-list').innerHTML = rows.length ? rows.slice(0, 30).map(item => {
     const fullName = item.hostname || item.label || 'Unidentified device';
     // Same shortening as the map chips: the first label is what a person says.
     const dot = fullName.indexOf('.');
@@ -611,6 +635,14 @@ async function forgetNode(id) {
     return response.ok;
   } catch { return false; }
 }
+
+$('rooms-summary').addEventListener('click', event => {
+  const pill = event.target.closest('.room-pill');
+  if (!pill) return;
+  const room = pill.dataset.room;
+  roomFilter = room === '__all' ? null : (roomFilter === room ? null : room);
+  if (latest) renderArp(latest.devices || latest.arp);
+});
 
 $('arp-list').addEventListener('change', async event => {
   const input = event.target.closest('.room-input');
