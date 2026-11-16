@@ -7,24 +7,41 @@
 // top domains and the query history, and caches the result. It never changes
 // anything in Pi-hole.
 
-const BASE = (process.env.PIHOLE_URL || '').replace(/\/+$/, '');
-const TOKEN = process.env.PIHOLE_TOKEN || '';
+// Seeded from the environment, but changeable at runtime from the dashboard.
+let config = {
+  base: (process.env.PIHOLE_URL || '').replace(/\/+$/, ''),
+  token: process.env.PIHOLE_TOKEN || ''
+};
 const CACHE_MS = 60_000;
 
 let cache = { at: 0, value: null };
 let session = { id: null, at: 0 };
 
+// Applies new credentials and forgets any cached session or result.
+function configure(next = {}) {
+  config = {
+    base: String(next.base || '').replace(/\/+$/, ''),
+    token: String(next.token || '')
+  };
+  cache = { at: 0, value: null };
+  session = { id: null, at: 0 };
+}
+
+function currentConfig() {
+  return { base: config.base, tokenSet: Boolean(config.token) };
+}
+
 function configured() {
-  return Boolean(BASE && TOKEN);
+  return Boolean(config.base && config.token);
 }
 
 async function login() {
   // Sessions are cheap but not free; reuse one for a few minutes.
   if (session.id && Date.now() - session.at < 4 * 60_000) return session.id;
-  const response = await fetch(`${BASE}/api/auth`, {
+  const response = await fetch(`${config.base}/api/auth`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ password: TOKEN }),
+    body: JSON.stringify({ password: config.token }),
     signal: AbortSignal.timeout(6000)
   });
   if (!response.ok) throw new Error(`auth ${response.status}`);
@@ -36,7 +53,7 @@ async function login() {
 }
 
 async function apiGet(path, sid) {
-  const response = await fetch(`${BASE}${path}`, {
+  const response = await fetch(`${config.base}${path}`, {
     headers: { 'X-FTL-SID': sid },
     signal: AbortSignal.timeout(6000)
   });
@@ -106,4 +123,4 @@ function isStale() {
   return !cache.value || Date.now() - cache.at >= CACHE_MS;
 }
 
-module.exports = { fetchPihole, lastValue, isStale, configured, summariseSummary, summariseTopDomains };
+module.exports = { fetchPihole, lastValue, isStale, configured, configure, currentConfig, summariseSummary, summariseTopDomains };

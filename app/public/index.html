@@ -99,7 +99,17 @@
         </article>
         <article class="panel dns-panel" aria-label="DNS and blocking">
           <div class="panel-heading"><div><div class="eyebrow">DNS</div><h2>Blocking</h2></div><span class="subtle-badge">PI-HOLE</span></div>
-          <div id="pihole-body" class="pihole-body"><p class="muted-copy">Pi-hole is not configured. Set PIHOLE_TOKEN to show blocking totals.</p></div>
+          <div id="pihole-body" class="pihole-body"><p class="muted-copy">Pi-hole is not configured yet.</p></div>
+          <button id="pihole-open" class="small-button ghost" type="button">Set key</button>
+          <form id="pihole-form" class="pihole-form" hidden>
+            <label for="pihole-url">Pi-hole address<input id="pihole-url" type="url" value="http://192.168.1.2" spellcheck="false"></label>
+            <label for="pihole-token">API key<input id="pihole-token" type="password" placeholder="paste the app password" spellcheck="false" autocomplete="off"></label>
+            <div class="pihole-form-actions">
+              <button type="submit" class="small-button">Save key</button>
+              <button type="button" id="pihole-cancel" class="small-button ghost">Cancel</button>
+            </div>
+            <p class="muted-copy pihole-hint">Stored on the NAS, readable only by the dashboard. Never shown again.</p>
+          </form>
         </article>
       </section>
 

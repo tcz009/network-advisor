@@ -111,3 +111,13 @@ body.data-stale .metric-card,body.data-stale .map-panel,body.data-stale .devices
 .slow-row{display:flex;align-items:center;gap:8px;font-size:9px;color:#b9c8ce;padding:2px 0}
 .slow-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#91a2ad}
 .slow-row b{font-family:var(--mono);color:var(--text);font-weight:600}
+
+/* Pi-hole key entry */
+.pihole-form{display:flex;flex-direction:column;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #1e2b35}
+.pihole-form label{display:flex;flex-direction:column;gap:4px;font-size:9px;color:#80919a;letter-spacing:.06em;text-transform:uppercase}
+.pihole-form input{height:30px;padding:0 9px;border-radius:6px;border:1px solid #2b3b47;background:#0d141b;color:var(--text);font-size:11px;font-family:var(--mono)}
+.pihole-form input:focus{outline:2px solid #d4a85c55;outline-offset:1px}
+.pihole-form-actions{display:flex;gap:8px}
+.pihole-hint{margin:0;font-size:9px}
+.small-button.ghost{background:transparent;border-color:#2b3b47;color:#b9c8ce}
+.small-button.ghost:hover{border-color:var(--mint);color:var(--text)}

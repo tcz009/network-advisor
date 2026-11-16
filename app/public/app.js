@@ -466,13 +466,15 @@ function renderChanges(events) {
 function renderPihole(pihole) {
   const body = $('pihole-body');
   if (!pihole || pihole.configured === false) {
-    body.innerHTML = '<p class="muted-copy">Pi-hole is not configured. Set PIHOLE_TOKEN to show blocking totals.</p>';
+    body.innerHTML = '<p class="muted-copy">Pi-hole is not configured yet. Paste an app password from Pi-hole → Settings → API.</p>';
+    $('pihole-open').hidden = false;
     return;
   }
   if (pihole.ok === false) {
     body.innerHTML = `<p class="muted-copy">Pi-hole did not answer${pihole.error ? ` (${escapeHtml(pihole.error)})` : ''}.</p>`;
     return;
   }
+  $('pihole-open').hidden = false;
   const summary = pihole.summary || {};
   const top = (pihole.topBlocked || [])[0];
   body.innerHTML = `
@@ -756,6 +758,37 @@ async function forgetNode(id) {
     return response.ok;
   } catch { return false; }
 }
+
+$('pihole-open').addEventListener('click', () => {
+  const form = $('pihole-form');
+  form.hidden = !form.hidden;
+  if (!form.hidden) $('pihole-token').focus();
+});
+$('pihole-cancel').addEventListener('click', () => { $('pihole-form').hidden = true; });
+
+$('pihole-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = event.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/settings/pihole', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      cache: 'no-store',
+      body: JSON.stringify({ url: $('pihole-url').value.trim(), token: $('pihole-token').value.trim() })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    $('pihole-token').value = '';
+    $('pihole-form').hidden = true;
+    toast(result.ok ? 'Pi-hole connected' : `Key saved, but Pi-hole said: ${(result.pihole && (result.pihole.error || 'no answer'))}`);
+    await refresh();
+  } catch (err) {
+    toast(`Could not save the key: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 $('rooms-summary').addEventListener('click', event => {
   const pill = event.target.closest('.room-pill');

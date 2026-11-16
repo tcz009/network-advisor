@@ -14,7 +14,7 @@ const { classifyDevice } = require('./kinds');
 const { discoverDevices } = require('./discovery');
 const { parseLldpCapture, readCapture } = require('./lldp');
 const { snapshot, computeChanges, appendEvents } = require('./changes');
-const { fetchPihole, lastValue: lastPihole, isStale: piholeStale } = require('./pihole');
+const { fetchPihole, lastValue: lastPihole, isStale: piholeStale, configure: configurePihole, currentConfig: piholeConfig } = require('./pihole');
 const { parsePlctool } = require('./powerline');
 
 const exec = promisify(execFile);
@@ -31,6 +31,7 @@ const EVENTS_FILE = path.join(DATA_DIR, 'events.json');
 const SNAPSHOT_FILE = path.join(DATA_DIR, 'snapshot.json');
 const LATENCY_FILE = path.join(DATA_DIR, 'latency.json');
 const POWERLINE_HISTORY_FILE = path.join(DATA_DIR, 'powerline-history.json');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const TARGET = process.env.CHECK_TARGET || '1.1.1.1';
 const HOSTNAME = process.env.CHECK_HOSTNAME || 'cloudflare.com';
 // Active discovery is opt-in: with SCAN_SUBNET unset the app stays passive and
@@ -694,6 +695,12 @@ function loadState() {
   const loadedPowerline = readJsonFile(POWERLINE_HISTORY_FILE);
   if (loadedPowerline.ok && Array.isArray(loadedPowerline.value)) {
     powerlineHistory = loadedPowerline.value.filter(entry => entry && typeof entry.at === 'number').slice(-240);
+  }
+
+  const loadedSettings = readJsonFile(SETTINGS_FILE);
+  if (loadedSettings.ok && loadedSettings.value && loadedSettings.value.pihole) {
+    const saved = loadedSettings.value.pihole;
+    if (saved.token) configurePihole({ base: saved.url || piholeConfig().base, token: saved.token });
   }
 
   const loadedLatency = readJsonFile(LATENCY_FILE);
@@ -1396,6 +1403,28 @@ async function handle(req, res) {
 
   if (reqUrl.pathname === '/api/pihole' && req.method === 'GET') {
     return json(res, 200, lastPihole());
+  }
+
+  // Paste-a-key setup for Pi-hole; the token is stored 0600 and never returned.
+  if (reqUrl.pathname === '/api/settings/pihole' && req.method === 'POST') {
+    if (req.headers['x-advisor-intent'] !== 'write') {
+      return json(res, 403, { error: 'Set x-advisor-intent: write to change settings.' });
+    }
+    const body = await readBody(req);
+    const url = String((body && body.url) || 'http://192.168.1.2').trim();
+    const token = String((body && body.token) || '').trim();
+    if (!/^https?:\/\/[^\s]+$/.test(url)) return json(res, 400, { error: 'Pi-hole URL must start with http:// or https://' });
+    if (token.length < 4) return json(res, 400, { error: 'That key looks too short.' });
+
+    configurePihole({ base: url, token });
+    const result = await fetchPihole();
+    try {
+      writeJsonAtomic(SETTINGS_FILE, { pihole: { url, token } });
+      fs.chmodSync(SETTINGS_FILE, 0o600);
+    } catch (err) {
+      console.error('Could not save settings:', err.message);
+    }
+    return json(res, 200, { ok: Boolean(result && result.ok), pihole: result });
   }
 
   if (reqUrl.pathname === '/api/export' && req.method === 'GET') {

@@ -519,6 +519,24 @@ test('HTTP endpoints behave under attack and normal use', async t => {
     if (!hole.configured) assert.equal(hole.ok, false);
   });
 
+  await t.test('settings refuse writes without the intent header', async () => {
+    const response = await fetch(`${base}/api/settings/pihole`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: 'x'.repeat(32) })
+    });
+    assert.equal(response.status, 403);
+  });
+
+  await t.test('settings reject an invalid Pi-hole URL', async () => {
+    const response = await fetch(`${base}/api/settings/pihole`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-advisor-intent': 'write' },
+      body: JSON.stringify({ url: 'not-a-url', token: 'x'.repeat(32) })
+    });
+    assert.equal(response.status, 400);
+  });
+
   await t.test('history endpoint answers with an array', async () => {
     const response = await fetch(`${base}/api/history`);
     assert.equal(response.status, 200);
