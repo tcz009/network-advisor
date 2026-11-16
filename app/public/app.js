@@ -560,14 +560,57 @@ function drawSparkline(elementId, values) {
   return true;
 }
 
+function sparklineSvg(values, width = 54, height = 14) {
+  const points = (values || []).filter(value => typeof value === 'number' && Number.isFinite(value));
+  if (points.length < 2) return '';
+  const max = Math.max(...points, 1);
+  const stepX = width / (points.length - 1);
+  const coords = points.map((value, index) => {
+    const x = (index * stepX).toFixed(1);
+    const y = (height - 2 - (value / max) * (height - 4)).toFixed(1);
+    return `${x},${y}`;
+  });
+  return `<svg class="row-spark" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" aria-hidden="true"><polyline class="spark-line" points="${coords.join(' ')}"></polyline></svg>`;
+}
+
+function renderSlowest(devices) {
+  const el = $('slowest-list');
+  if (!el) return;
+  const ranked = (devices || [])
+    .filter(device => typeof device.sweepMs === 'number' && device.responded !== false)
+    .sort((a, b) => b.sweepMs - a.sweepMs)
+    .slice(0, 6);
+  if (!ranked.length) {
+    el.innerHTML = '<p class="muted-copy">No sweep results yet.</p>';
+    return;
+  }
+  el.innerHTML = ranked.map(device => {
+    const name = device.hostname || device.label || device.ip;
+    const room = device.room ? ` · ${device.room}` : '';
+    return `<div class="slow-row">${sparklineSvg(device.trend, 48, 12)}<span class="slow-name" title="${escapeHtml(name)}">${escapeHtml(String(name).slice(0, 18))}${escapeHtml(room)}</span><b>${escapeHtml(fmtMs(device.sweepMs))}</b></div>`;
+  }).join('');
+}
+
+function renderTrendMeta(data) {
+  const meta = $('trend-meta');
+  if (!meta) return;
+  const records = Array.isArray(data.history) ? data.history : [];
+  const latest = records[records.length - 1] || {};
+  const bits = [];
+  if (data.publicIp) bits.push(`public IP ${data.publicIp}`);
+  if (typeof latest.routerJitter === 'number') bits.push(`router jitter ${fmtMs(latest.routerJitter)}`);
+  if (typeof latest.routerLoss === 'number' && latest.routerLoss > 0) bits.push(`router loss ${latest.routerLoss}%`);
+  if (typeof latest.internetLoss === 'number' && latest.internetLoss > 0) bits.push(`internet loss ${latest.internetLoss}%`);
+  meta.textContent = bits.join(' · ');
+}
+
 function renderTrend(history, scan) {
   const records = Array.isArray(history) ? history : [];
   const scanNote = scan && scan.enabled ? `Active discovery sweeps ${scan.subnet} when you run a check.` : null;
   const drewRouter = drawSparkline('trend-router', records.map(record => record.routerMs));
   const drewInternet = drawSparkline('trend-internet', records.map(record => record.internetMs));
   const latestRecord = records[records.length - 1];
-  $('trend-router-now').textContent = latestRecord && latestRecord.routerMs != null ? fmtMs(latestRecord.routerMs) : '—';
-  $('trend-internet-now').textContent = latestRecord && latestRecord.internetMs != null ? fmtMs(latestRecord.internetMs) : '—';
+d.internetMs != null ? fmtMs(latestRecord.internetMs) : '—';
   if (!drewRouter && !drewInternet) {
     $('trend-note').textContent = records.length
       ? 'Not enough successful checks yet to draw a line.'
@@ -591,6 +634,8 @@ function render(data) {
   renderPihole(data.pihole);
   renderPowerline(data.powerline);
   renderTrend(data.history, data.scan);
+  renderTrendMeta(data);
+  renderSlowest(data.devices);
   renderArp(data.devices || data.arp);
   renderFindings(data);
   const check = data.check;

@@ -50,6 +50,15 @@ test('parsePing keeps the average but flags partial loss', () => {
   assert.match(result.error, /lost/);
 });
 
+test('parsePing reports jitter and the worst round-trip', () => {
+  const out = '3 packets transmitted, 3 packets received, 0.0% packet loss\n'
+    + 'round-trip min/avg/max/mdev = 1.0/2.5/4.0/1.2 ms\n';
+  const result = advisor.parsePing(out);
+  assert.equal(result.avgMs, 2.5);
+  assert.equal(result.maxMs, 4);
+  assert.equal(result.jitterMs, 1.2);
+});
+
 test('parsePing tolerates empty or garbage input', () => {
   assert.equal(advisor.parsePing('').avgMs, null);
   assert.equal(advisor.parsePing(undefined).avgMs, null);

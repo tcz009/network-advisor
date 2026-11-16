@@ -79,6 +79,12 @@ Managed switches and routers advertise themselves with LLDP. Capturing that need
 
 Set `LLDP_IFACE` if the NAS's LAN interface is not `eno1`, or `LLDP=false` to stop showing it. Unmanaged switches and most consumer routers send nothing, so an empty result is normal.
 
+## Latency history and WAN quality
+
+Every sweep records each answering device's round-trip, kept per MAC so an address change doesn't break the series. The **Slowest right now** list ranks devices with a sparkline of recent samples, and `GET /api/latency` returns the raw series (96 samples per device). That is the number to compare before and after changing cables or access points.
+
+The trend panel also shows **jitter** (from ping's mdev), packet loss and your **public IP**, so a VPN or ISP change is visible. `PUBLIC_IP_CHECK=false` stops the one outbound call this makes.
+
 ## What changed, and DNS blocking
 
 Every check compares the device list with the previous one and records what **joined, left, moved to a new address, or was replaced at the same address**. Recent events appear in the *What changed* panel; `/api/events` returns the last 100.
@@ -207,6 +213,7 @@ Device labels and measurements are stored in the named Docker volume `network-ad
 | `/api/nodes/<id>` | DELETE | Forget a device (requires `x-advisor-intent: delete`) |
 | `/api/speed/download` | GET | Transfer a fixed-size body for the local speed test |
 | `/api/speed/upload` | POST | Receive up to 2 MiB for the local speed test |
+| `/api/latency` | GET | Per-device round-trip history |
 | `/api/events` | GET | Device changes: joined, left, moved, replaced |
 | `/api/pihole` | GET | Pi-hole totals, or `configured: false` |
 | `/api/export` | GET | Secret-free JSON snapshot: devices, rooms, agents, history, LLDP |

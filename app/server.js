@@ -29,6 +29,7 @@ const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
 const SCAN_FILE = path.join(DATA_DIR, 'lastscan.json');
 const EVENTS_FILE = path.join(DATA_DIR, 'events.json');
 const SNAPSHOT_FILE = path.join(DATA_DIR, 'snapshot.json');
+const LATENCY_FILE = path.join(DATA_DIR, 'latency.json');
 const TARGET = process.env.CHECK_TARGET || '1.1.1.1';
 const HOSTNAME = process.env.CHECK_HOSTNAME || 'cloudflare.com';
 // Active discovery is opt-in: with SCAN_SUBNET unset the app stays passive and
@@ -48,6 +49,12 @@ const POWERLINE_FILE = process.env.POWERLINE_FILE || '/lldp/powerline.txt';
 const LLDP_ENABLED = String(process.env.LLDP || 'true').toLowerCase() !== 'false';
 // Optional webhook (ntfy, Telegram, anything that takes JSON) for device changes.
 const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK || '';
+// Knowing your public address makes a VPN or ISP change visible; opt out with
+// PUBLIC_IP_CHECK=false and the dashboard never calls out for it.
+const PUBLIC_IP_CHECK = String(process.env.PUBLIC_IP_CHECK || 'true').toLowerCase() !== 'false';
+// Per-device round-trip history: enough to see a trend, not a flood.
+const LATENCY_SAMPLES = 96;
+const LATENCY_PUBLISHED = 24;
 
 // Host header validation exists to defeat DNS rebinding: an attacker page whose
 // hostname resolves to this NAS sends its own hostname in Host, which is exactly
@@ -115,7 +122,9 @@ let discoveryByIp = new Map();
 let lldpCache = { mtime: 0, value: null };
 let powerlineCache = { mtime: 0, value: null };
 let changeEvents = [];
+let publicIp = { value: null, at: 0, error: null };
 let deviceSnapshot = new Map();
+let latencyHistory = new Map();   // mac-or-ip -> [{at, ms}]
 let sweepResponders = new Map();
 let lastSweepAt = 0;
 let scanInFlight = null;
@@ -272,13 +281,18 @@ function readRaw(req, maxBytes = 2 * 1024 * 1024) {
 function parsePing(output) {
   const text = String(output || '');
   const loss = text.match(/([\d.]+)% packet loss/);
-  const timing = text.match(/(?:round-trip|rtt) min\/avg\/max(?:\/mdev)? = [\d.]+\/([\d.]+)\//);
+  // min/avg/max[/mdev]; mdev is the mean deviation, a usable jitter figure.
+  const timing = text.match(/(?:round-trip|rtt) min\/avg\/max(?:\/mdev)? = ([\d.]+)\/([\d.]+)\/([\d.]+)(?:\/([\d.]+))?/);
   const lossPct = loss ? Number(loss[1]) : null;
-  const avgMs = timing ? Number(timing[1]) : null;
+  const avgMs = timing ? Number(timing[2]) : null;
+  const maxMs = timing ? Number(timing[3]) : null;
+  const jitterMs = timing && timing[4] !== undefined ? Number(timing[4]) : null;
   return {
     ok: avgMs !== null && lossPct === 0,
     reachable: avgMs !== null,
     avgMs,
+    maxMs,
+    jitterMs,
     lossPct,
     error: avgMs === null ? 'No ping reply' : (lossPct > 0 ? 'Some ping replies were lost' : null)
   };
@@ -675,6 +689,14 @@ function loadState() {
   if (loadedEvents.ok && Array.isArray(loadedEvents.value)) {
     changeEvents = loadedEvents.value.filter(event => event && typeof event === 'object').slice(-200);
   }
+  const loadedLatency = readJsonFile(LATENCY_FILE);
+  if (loadedLatency.ok && loadedLatency.value && typeof loadedLatency.value === 'object') {
+    for (const [key, series] of Object.entries(loadedLatency.value)) {
+      if (!Array.isArray(series)) continue;
+      const clean = series.filter(point => point && typeof point.ms === 'number').slice(-LATENCY_SAMPLES);
+      if (clean.length) latencyHistory.set(key, clean);
+    }
+  }
   const loadedSnapshot = readJsonFile(SNAPSHOT_FILE);
   if (loadedSnapshot.ok && Array.isArray(loadedSnapshot.value)) {
     deviceSnapshot = new Map(loadedSnapshot.value.filter(d => d && d.ip).map(d => [d.mac || d.ip, d]));
@@ -726,6 +748,40 @@ async function notifyChanges(events) {
     });
   } catch (err) {
     console.error('Change webhook failed:', err.message);
+  }
+}
+
+async function refreshPublicIp() {
+  if (!PUBLIC_IP_CHECK) return;
+  if (Date.now() - publicIp.at < 10 * 60_000) return;
+  try {
+    const response = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(5000) });
+    const body = await response.json();
+    publicIp = { value: typeof body.ip === 'string' ? body.ip : null, at: Date.now(), error: null };
+  } catch (err) {
+    publicIp = { value: publicIp.value, at: Date.now(), error: err.message };
+  }
+}
+
+// Keeps a rolling round-trip history per device, keyed by MAC so an address
+// change doesn't start a new series.
+function recordScanLatency(responders) {
+  if (!responders || !responders.size) return;
+  const at = Date.now();
+  const byIp = new Map(mergedDevices().map(device => [device.ip, device]));
+  for (const [ip, ms] of responders) {
+    if (typeof ms !== 'number' || !Number.isFinite(ms)) continue;
+    const device = byIp.get(ip);
+    const key = (device && device.mac) || ip;
+    const series = latencyHistory.get(key) || [];
+    series.push({ at, ms: Math.round(ms * 10) / 10 });
+    if (series.length > LATENCY_SAMPLES) series.splice(0, series.length - LATENCY_SAMPLES);
+    latencyHistory.set(key, series);
+  }
+  try {
+    writeJsonAtomic(LATENCY_FILE, Object.fromEntries(latencyHistory));
+  } catch (err) {
+    console.error('Could not save latency history:', err.message);
   }
 }
 
@@ -858,6 +914,9 @@ function runCheck() {
       routerLoss: readings.router.lossPct,
       internetMs: readings.internet.avgMs,
       internetLoss: readings.internet.lossPct,
+      routerJitter: readings.router.jitterMs,
+      internetJitter: readings.internet.jitterMs,
+      publicIp: publicIp.value,
       dnsOk: Boolean(readings.dns.ok),
       load1: readings.load?.load1 ?? null,
       devices: readings.devices.length
@@ -866,6 +925,7 @@ function runCheck() {
     saveHistory();
     recordChanges();
     if (piholeStale()) fetchPihole().catch(() => {});
+    refreshPublicIp().catch(() => {});
     return lastCheck;
   })();
   return checkInFlight.finally(() => { checkInFlight = null; });
@@ -958,6 +1018,7 @@ async function runScan() {
     } catch (err) {
       console.error('Could not save the scan snapshot:', err.message);
     }
+    recordScanLatency(sweep.responders);
     recordChanges();
     return lastScan;
   })();
@@ -1245,6 +1306,8 @@ async function handle(req, res) {
       powerline: powerlineState(mergedDevices()),
       changes: changeEvents.slice(-20).reverse(),
       pihole: lastPihole(),
+      publicIp: publicIp.value,
+      publicIpError: publicIp.error,
       nodes: activeNodes,
       agents: activeAgents(),
       devices: mergedDevices(),
@@ -1285,6 +1348,10 @@ async function handle(req, res) {
     } catch (err) {
       return json(res, err.status || 400, { error: err.message });
     }
+  }
+
+  if (reqUrl.pathname === '/api/latency' && req.method === 'GET') {
+    return json(res, 200, { devices: Object.fromEntries(latencyHistory), sampleLimit: LATENCY_SAMPLES });
   }
 
   if (reqUrl.pathname === '/api/events' && req.method === 'GET') {
@@ -1568,6 +1635,8 @@ module.exports = {
   mergedDevices,
   powerlineState,
   recordChanges,
+  recordScanLatency,
+  latencyHistory,
   computeChanges,
   lldpNeighbours,
   discoveryByIp,
