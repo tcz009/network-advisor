@@ -268,19 +268,27 @@ function drawMapLines() {
   rows.sort((a, b) => a.top - b.top);
 
   const BUS_GAP = 16;
-  let trunkFrom = n.bottom;
-  rows.forEach(row => {
-    const busY = row.top - BUS_GAP;
-    const xs = row.items.map(leaf => leaf.box.cx);
-    const left = Math.min(...xs, n.cx);
-    const right = Math.max(...xs, n.cx);
-    if (right - left > 1) line(left, busY, right, busY, false);
-    if (busY > trunkFrom) line(n.cx, trunkFrom, n.cx, busY, false);
-    for (const leaf of row.items) {
-      line(leaf.box.cx, busY, leaf.box.cx, leaf.box.top, !leaf.measured);
-    }
-    trunkFrom = busY;
-  });
+  // Rows connect through a spine down the left edge. A centre trunk would run
+  // straight through the row above, which is what made the first attempt look
+  // like the cards were strung on a wire.
+  const SPINE_X = 22;
+  const buses = rows.map(row => ({
+    top: row.top,
+    y: row.top - BUS_GAP,
+    items: row.items,
+    right: Math.max(...row.items.map(leaf => leaf.box.cx), n.cx)
+  }));
+
+  if (buses.length) {
+    line(n.cx, n.bottom, n.cx, buses[0].y, false);
+    buses.forEach((bus, index) => {
+      line(SPINE_X, bus.y, bus.right, bus.y, false);
+      if (index > 0) line(SPINE_X, buses[index - 1].y, SPINE_X, bus.y, false);
+      for (const leaf of bus.items) {
+        line(leaf.box.cx, bus.y, leaf.box.cx, leaf.box.top, !leaf.measured);
+      }
+    });
+  }
   svg.innerHTML = parts.join('');
 }
 
