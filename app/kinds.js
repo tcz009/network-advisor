@@ -24,7 +24,15 @@ const RULES = [
 
 // Ordered checks: a Kasa model beats a hostname guess, and a hostname beats the
 // vendor label (a TP-Link MAC could be a plug or a router).
-function classifyDevice({ hostname = '', label = '', model = '' } = {}) {
+const SERVICE_KINDS = [
+  { kind: 'speaker', pattern: /airplay|raop|sonos/i },
+  { kind: 'media player', pattern: /googlecast|dial/i },
+  { kind: 'printer', pattern: /ipp|ipps|printer/i },
+  { kind: 'camera', pattern: /camera|rtsp/i },
+  { kind: 'hub', pattern: /hue|homekit|hap/i }
+];
+
+function classifyDevice({ hostname = '', label = '', model = '', services = [], upnpServer = '' } = {}) {
   const fromModel = String(model || '');
   // Kasa numbering: HS1xx and KP1xx are plugs, HS2xx are wall switches.
   if (/\bHS2\d{2}\b/i.test(fromModel)) return { kind: 'switch', evidence: `model ${fromModel}` };
@@ -37,6 +45,17 @@ function classifyDevice({ hostname = '', label = '', model = '' } = {}) {
     for (const rule of RULES) {
       if (rule.pattern.test(String(value))) return { kind: rule.kind, evidence: `${field} ${value}` };
     }
+  }
+  // Broadcast hints are the most trustworthy signal left: a device that says
+  // "Sonos" over SSDP is a speaker regardless of its hostname.
+  const server = String(upnpServer || '');
+  if (/sonos/i.test(server)) return { kind: 'speaker', evidence: 'ssdp Sonos' };
+  if (/printer|cups|ipp/i.test(server)) return { kind: 'printer', evidence: 'ssdp printer' };
+
+  const announced = (services || []).map(service => String(service).toLowerCase());
+  for (const rule of SERVICE_KINDS) {
+    const hit = announced.find(service => rule.pattern.test(service));
+    if (hit) return { kind: rule.kind, evidence: `mdns ${hit}` };
   }
   return null;
 }

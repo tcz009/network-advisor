@@ -11,6 +11,7 @@ const { promisify } = require('node:util');
 const { describeMac } = require('./oui');
 const { discoverKasa } = require('./kasa');
 const { classifyDevice } = require('./kinds');
+const { discoverDevices } = require('./discovery');
 
 const exec = promisify(execFile);
 
@@ -30,6 +31,9 @@ const SCAN_MIN_INTERVAL_MS = 30_000;
 // Kasa plugs answer on TCP 9999 even when they ignore ICMP, so a sweep probes it.
 // Set KASA_PROBE=false to leave the scan to ICMP only.
 const KASA_PROBE = String(process.env.KASA_PROBE || 'true').toLowerCase() !== 'false';
+// SSDP/mDNS sweep the whole segment regardless of ping, so they find devices
+// that ignore ICMP. DISCOVERY=false leaves the scan to ping and 9999 only.
+const DISCOVERY = String(process.env.DISCOVERY || 'true').toLowerCase() !== 'false';
 
 // Host header validation exists to defeat DNS rebinding: an attacker page whose
 // hostname resolves to this NAS sends its own hostname in Host, which is exactly
@@ -85,6 +89,7 @@ let lastCheck = null;
 let lastScan = null;
 let lastScanStartedAt = 0;
 let kasaByIp = new Map();
+let discoveryByIp = new Map();
 let sweepResponders = new Map();
 let lastSweepAt = 0;
 let scanInFlight = null;
@@ -747,6 +752,31 @@ async function runScan() {
     const gateway = readGateway();
     const devices = await enrichDevices(neighbourDevices(readArpTable(), gateway?.iface));
 
+    // Broadcast discovery: devices that never answer ping still announce
+    // themselves over SSDP or mDNS, and some of them are not in ARP at all.
+    let discovered = [];
+    if (DISCOVERY) {
+      try {
+        const result = await discoverDevices({ timeout: 2000 });
+        discovered = result.hosts;
+        discoveryByIp = result.byIp;
+        for (const entry of discovered) {
+          if (!devices.some(device => device.ip === entry.ip)) {
+            devices.push({
+              ip: entry.ip,
+              mac: null,
+              iface: null,
+              label: null,
+              hostname: entry.mdns ? entry.mdns.name : null,
+              discovered: true
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Discovery failed:', err.message);
+      }
+    }
+
     // Probe the Kasa port on anything that answered, plus anything the neighbour
     // table knows about but cannot name — that is where plugs hide.
     let kasa = [];
@@ -771,6 +801,7 @@ async function runScan() {
       answered: sweep.answered,
       devices: devices.length,
       kasa,
+      discovered: discovered.length,
       arp: devices.map(device => ({
         ...device,
         responded: sweep.responders.has(device.ip),
@@ -921,21 +952,27 @@ function mergeDevices(nasDevices, agentMap, { now = Date.now(), ttlMs = AGENT_DE
 function annotateDevices(devices, {
   roomMap = rooms,
   kasaMap = kasaByIp,
+  discoveryMap = discoveryByIp,
   responders = sweepResponders,
   notes = DEVICE_NOTES,
   sweepAt = lastSweepAt
 } = {}) {
   return (devices || []).map(device => {
     const kasa = kasaMap.get(device.ip) || null;
+    const broadcast = discoveryMap.get(device.ip) || null;
     const classified = classifyDevice({
       hostname: device.hostname,
       label: device.label,
-      model: kasa && kasa.model
+      model: kasa && kasa.model,
+      services: (broadcast && broadcast.mdns && broadcast.mdns.services) || [],
+      upnpServer: (broadcast && broadcast.upnp && broadcast.upnp.server) || ''
     });
     const annotated = {
       ...device,
       room: roomMap[String(device.mac || '').toLowerCase()] || null,
       kasa,
+      mdns: broadcast ? broadcast.mdns : null,
+      upnp: broadcast ? broadcast.upnp : null,
       note: notes[device.ip] || device.note || null,
       kind: classified ? classified.kind : null,
       kindEvidence: classified ? classified.evidence : null
@@ -1327,5 +1364,6 @@ module.exports = {
   mergeDevices,
   annotateDevices,
   mergedDevices,
+  discoveryByIp,
   collectReadings
 };

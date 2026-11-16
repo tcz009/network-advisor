@@ -199,10 +199,17 @@ function mapLeaves(data) {
         : null;
       const vendor = kasaName || (device.label && device.label !== 'Randomised MAC' ? device.label : null);
       const latency = typeof device.sweepMs === 'number' ? fmtMs(device.sweepMs) : null;
+      const mdnsName = device.mdns && device.mdns.name ? device.mdns.name.replace(/\.local$/, '') : null;
+      const services = (device.mdns && device.mdns.services) || [];
+      const upnp = device.upnp && device.upnp.server
+        ? device.upnp.server.replace(/^.*?UPnP\/[\d.]+\s*/i, '').replace(/\/.*$/, '')
+        : null;
       return {
         ip: device.ip,
         vendor,
-        name: device.hostname || vendor || null,
+        name: device.hostname || mdnsName || vendor || null,
+        services,
+        upnp,
         seenBy: device.seenBy || [],
         unresponsive: device.responded === false,
         kind: device.kind || null,
@@ -230,6 +237,8 @@ function mapLeaves(data) {
       entry.ip,
       entry.room,
       entry.kind,
+      entry.services && entry.services.length ? `mdns: ${entry.services.slice(0, 2).join(', ')}` : null,
+      entry.upnp,
       entry.vendor && entry.vendor !== entry.name ? entry.vendor : null,
       entry.note,
       entry.seenBy.length > 1 ? `seen by ${entry.seenBy.length} hosts` : null,
