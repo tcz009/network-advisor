@@ -610,7 +610,8 @@ function renderTrend(history, scan) {
   const drewRouter = drawSparkline('trend-router', records.map(record => record.routerMs));
   const drewInternet = drawSparkline('trend-internet', records.map(record => record.internetMs));
   const latestRecord = records[records.length - 1];
-d.internetMs != null ? fmtMs(latestRecord.internetMs) : '—';
+  $('trend-router-now').textContent = latestRecord && latestRecord.routerMs != null ? fmtMs(latestRecord.routerMs) : '—';
+  $('trend-internet-now').textContent = latestRecord && latestRecord.internetMs != null ? fmtMs(latestRecord.internetMs) : '—';
   if (!drewRouter && !drewInternet) {
     $('trend-note').textContent = records.length
       ? 'Not enough successful checks yet to draw a line.'
@@ -666,7 +667,8 @@ async function refresh() {
     const data = await response.json();
     render(data);
     lastGoodRender = Date.now();
-  } catch {
+  } catch (err) {
+    if (err) console.error('Refresh or render failed:', err && err.message ? err.message : err);
     const age = lastGoodRender
       ? new Date(lastGoodRender).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
       : null;
