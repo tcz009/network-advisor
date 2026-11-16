@@ -119,25 +119,113 @@ function renderNodes(nodes) {
   setMetric('online-count', online, 'devices');
   $('device-foot').textContent = online ? `${online} reporting from this dashboard` : 'Open the page on another device to add a node';
   $('nodes-total').textContent = String(sorted.length);
-  const left = sorted[0]; const right = sorted[1];
-  renderMapClient('client-left', left, 'Open dashboard on phone');
-  renderMapClient('client-right', right, 'Open dashboard on Mac');
-  const extra = Math.max(0, sorted.length - 2);
-  $('map-extra').textContent = extra ? ` · ${extra} more in device list` : '';
   $('nodes-table').innerHTML = sorted.length ? sorted.map(node => `<tr><td><div class="device-cell"><span class="device-dot">${node.deviceType?.includes('Mac') || node.deviceType?.includes('PC') ? '▱' : '▯'}</span><div><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.deviceType || 'Device')}</small></div></div></td><td>${escapeHtml(node.connection || 'Unknown')}<small class="table-secondary">Set on device</small></td><td>${fmtMs(node.browserRttMs)}<small class="table-secondary">Device-to-NAS response</small><small class="table-secondary">↓ ${fmtMbps(node.downMbps)} &nbsp; ↑ ${fmtMbps(node.upMbps)}${node.speedCheckedAt ? ` · checked ${timeAgo(new Date(node.speedCheckedAt).getTime())}` : ' · not measured'}</small></td><td>${timeAgo(node.lastSeen)}</td><td><span class="${node.online ? 'online-badge' : 'offline-badge'}">${node.online ? 'ONLINE' : 'OFFLINE'}</span></td></tr>`).join('') : '<tr><td class="empty-row" colspan="5">Open this page on your phone or MacBook to add it to the map.</td></tr>';
 }
-function renderMapClient(id, node, placeholder) {
-  const el = $(id);
-  if (!node) {
-    el.querySelector('.client-name').textContent = 'Waiting for device';
-    el.querySelector('.client-rtt').textContent = placeholder;
-    return;
-  }
-  el.querySelector('.client-name').textContent = node.name;
-  const speedAge = node.speedCheckedAt ? `local speed ${timeAgo(new Date(node.speedCheckedAt).getTime())}` : 'local speed not measured';
-  const localSpeed = node.downMbps == null ? 'local speed not measured' : speedAge;
-  el.querySelector('.client-rtt').textContent = `${node.online ? `to NAS ${fmtMs(node.browserRttMs)}` : 'Last seen'} · ${localSpeed}`;
+function mapLeaves(data) {
+  const sensors = (data.agents || []).map(agent => {
+    const hop = agent.gateway || agent.vpn?.address || null;
+    const hopIface = agent.iface || agent.vpn?.iface || null;
+    const toHub = agent.hub && agent.hub.avgMs != null ? fmtMs(agent.hub.avgMs) : 'not measured';
+    return {
+      kind: 'sensor',
+      name: agent.label || agent.name,
+      online: Boolean(agent.online),
+      lines: [hop ? `${hop}${hopIface ? ` ${hopIface}` : ''}${agent.vpn ? ' · VPN' : ''}` : 'no default route', `to hub ${toHub}`]
+    };
+  }).sort((a, b) => Number(b.online) - Number(a.online));
+
+  const browsers = (data.nodes || [])
+    .slice()
+    .sort((a, b) => Number(b.online) - Number(a.online) || b.lastSeen - a.lastSeen)
+    .map(node => ({
+      kind: 'browser',
+      name: node.name || 'Device',
+      online: Boolean(node.online),
+      lines: [`to NAS ${fmtMs(node.browserRttMs)}`, node.connection && node.connection !== 'Unknown' ? node.connection : (node.deviceType || 'device')]
+    }));
+
+  const powerline = browsers.filter(leaf => leaf.lines[1] === 'Powerline');
+
+  return { sensors, browsers, powerline };
 }
+
+function measureInStage(element) {
+  const stage = $('map-stage');
+  const box = stage.getBoundingClientRect();
+  const rect = element.getBoundingClientRect();
+  return {
+    left: rect.left - box.left,
+    top: rect.top - box.top,
+    width: rect.width,
+    height: rect.height,
+    cx: rect.left - box.left + rect.width / 2,
+    bottom: rect.top - box.top + rect.height
+  };
+}
+
+function drawMapLines() {
+  const stage = $('map-stage');
+  const svg = $('map-fan');
+  if (!stage || !svg) return;
+  const width = stage.clientWidth;
+  const height = stage.clientHeight;
+  if (!width || !height) return;
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', String(width));
+  svg.setAttribute('height', String(height));
+
+  const parts = [];
+  const link = (from, to, { curved = false, dim = false } = {}) => {
+    const d = curved
+      ? `M${from.cx} ${from.bottom} C${from.cx} ${from.bottom + (to.top - from.bottom) * 0.55} ${to.cx} ${to.top - (to.top - from.bottom) * 0.55} ${to.cx} ${to.top}`
+      : `M${from.cx} ${from.bottom} L${to.cx} ${to.top}`;
+    parts.push(`<path class="fan-line${dim ? ' fan-line-dim' : ''}" d="${d}"/>`);
+  };
+
+  const internet = document.querySelector('.label-internet');
+  const router = document.querySelector('.label-router');
+  const nas = document.querySelector('.label-nas');
+  if (internet && router && nas) {
+    const i = measureInStage(internet);
+    const r = measureInStage(router);
+    const n = measureInStage(nas);
+    link(i, r);
+    link(r, n);
+
+    // Fan out to every host the NAS and its sensors actually reported.
+    for (const leaf of document.querySelectorAll('#map-leaves .map-leaf[data-measured]')) {
+      const box = measureInStage(leaf);
+      link(n, box, { curved: true, dim: leaf.dataset.measured === '0' });
+    }
+  }
+  svg.innerHTML = parts.join('');
+}
+
+function renderMap(data) {
+  const { sensors, browsers, powerline } = mapLeaves(data);
+  const stage = $('map-stage');
+  const width = stage ? stage.clientWidth : 900;
+  // One row only: a second row would put connectors across the cards above it.
+  const capacity = Math.max(2, Math.min(8, Math.floor((width - 30) / 142)));
+  const leaves = [...sensors, ...browsers];
+  const shown = leaves.slice(0, capacity);
+  const hidden = leaves.length - shown.length;
+
+  $('map-leaves').innerHTML = shown.map(leaf => `
+    <div class="map-leaf ${leaf.kind}${leaf.online ? '' : ' offline'}" data-measured="${leaf.lines[0].includes('not measured') || leaf.lines[0].includes('no default route') ? '0' : '1'}">
+      <span class="leaf-icon">${leaf.kind === 'sensor' ? '◈' : '▯'}</span>
+      <span class="leaf-name" title="${escapeHtml(leaf.name)}">${escapeHtml(leaf.name)}</span>
+      ${leaf.lines.map(line => `<span class="leaf-sub">${escapeHtml(line)}</span>`).join('')}
+    </div>`).join('') + (hidden > 0 ? `<div class="map-leaf more"><span class="leaf-name">+${hidden} more</span><span class="leaf-sub">see the tables below</span></div>` : '');
+
+  $('map-extra').textContent = hidden > 0 ? ` · ${hidden} more reported` : '';
+  $('map-caption-text').textContent = powerline.length
+    ? 'Lines join what was actually measured. At least one device reports a powerline link, but the adapters themselves are not mapped.'
+    : 'Lines join what was actually measured. Switches, access points and the shared LAN segment between these hosts are not drawn.';
+
+  requestAnimationFrame(drawMapLines);
+}
+
 function renderArp(devices) {
   const rows = devices || [];
   setMetric('seen-count', rows.length, 'devices');
@@ -213,6 +301,7 @@ function render(data) {
   $('connection-indicator').classList.remove('offline');
   renderNodes(data.nodes);
   renderAgents(data.agents);
+  renderMap(data);
   renderTrend(data.history, data.scan);
   renderArp(data.devices || data.arp);
   renderFindings(data);
@@ -223,6 +312,8 @@ function render(data) {
     $('router-foot').textContent = check.gateway ? `${check.gateway} · ${check.router?.lossPct ?? '—'}% packet loss` : 'No gateway detected';
     $('internet-foot').textContent = `${check.target} · response time, not throughput`;
     $('map-router').textContent = check.gateway ? `${check.gateway} · ${fmtMs(check.router?.avgMs)}` : 'Gateway not found';
+    const iface = data.iface || '';
+    $('map-nas-sub').textContent = /^(eth|en|eno|enp|ens)/.test(iface) ? `Ethernet ${iface} · advisor host` : iface ? `${iface} · advisor host` : 'advisor host';
     $('map-internet').textContent = check.internet?.avgMs == null ? 'No ping reply' : `${fmtMs(check.internet.avgMs)} average response`;
     $('last-check').textContent = new Date(check.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
     $('map-footer-time').textContent = `Last NAS check ${timeAgo(new Date(check.checkedAt).getTime())}`;

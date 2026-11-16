@@ -58,18 +58,14 @@
           <div class="panel-heading"><div><div class="eyebrow">KNOWN NETWORK MAP</div><h2>How things connect</h2></div><div class="map-legend"><span><i class="legend-line active-line"></i> Checked from NAS</span><span><i class="legend-line unknown-line"></i> Route not identified</span></div></div>
           <div class="map-stage" id="map-stage">
             <div class="map-wash wash-one"></div><div class="map-wash wash-two"></div>
-            <svg class="map-lines" viewBox="0 0 1000 500" preserveAspectRatio="none" aria-hidden="true">
-              <path class="line path-internet" d="M500 92 L500 163"/><path class="line path-router" d="M500 235 L500 310"/>
-              <path class="line path-clients" d="M500 205 C420 265 315 345 225 421"/><path class="line path-clients" d="M500 205 C580 265 685 345 775 421"/>
-              <path class="line path-power" d="M610 190 C700 225 790 280 830 325"/>
-            </svg>
-            <div class="map-label label-internet"><span class="node-icon globe-icon">◎</span><span class="node-title">Internet</span><span class="node-sub" id="map-internet">Waiting for check</span></div>
-            <div class="map-label label-router"><span class="node-icon router-icon"><svg viewBox="0 0 28 28"><rect x="4" y="10" width="20" height="12" rx="3"/><path d="M9 10V7m10 3V7M9 16h.01M14 16h.01M19 16h.01"/></svg></span><span class="node-title">Router</span><span class="node-sub" id="map-router">Gateway not found yet</span></div>
-            <div class="map-label label-nas"><span class="node-icon nas-icon"><svg viewBox="0 0 28 28"><rect x="6" y="4" width="16" height="20" rx="3"/><path d="M10 9h8M10 14h8M10 19h4"/><circle cx="18" cy="19" r=".8"/></svg></span><span class="node-title">OMV NAS</span><span class="node-sub">Ethernet · advisor host</span></div>
-            <div class="client-node client-left" id="client-left"><span class="client-icon"><svg viewBox="0 0 28 28"><rect x="5" y="3.5" width="18" height="21" rx="4"/><path d="M11 20.5h6"/></svg></span><span class="client-name">Waiting for device</span><span class="client-rtt">Open dashboard on phone</span></div>
-            <div class="client-node client-right" id="client-right"><span class="client-icon"><svg viewBox="0 0 28 28"><rect x="3" y="5" width="22" height="15" rx="2"/><path d="M10 24h8m-4-4v4"/></svg></span><span class="client-name">Waiting for device</span><span class="client-rtt">Open dashboard on Mac</span></div>
-            <div class="power-node" id="power-node"><span class="power-icon">⌁</span><span><b>Powerline link</b><small>Not identified yet</small></span><span class="unknown-pill">UNKNOWN</span></div>
-            <div class="map-caption"><span class="caption-dot"></span><span id="map-caption-text">Paths are approximate; router, access point, and powerline hops are not mapped yet.</span><span id="map-extra"></span></div>
+            <div class="map-spine">
+              <div class="map-label label-internet"><span class="node-icon globe-icon">◎</span><span class="node-title">Internet</span><span class="node-sub" id="map-internet">Waiting for check</span></div>
+              <div class="map-label label-router"><span class="node-icon router-icon"><svg viewBox="0 0 28 28"><rect x="4" y="10" width="20" height="12" rx="3"/><path d="M9 10V7m10 3V7M9 16h.01M14 16h.01M19 16h.01"/></svg></span><span class="node-title">Router</span><span class="node-sub" id="map-router">Gateway not found yet</span></div>
+              <div class="map-label label-nas"><span class="node-icon nas-icon"><svg viewBox="0 0 28 28"><rect x="6" y="4" width="16" height="20" rx="3"/><path d="M10 9h8M10 14h8M10 19h4"/><circle cx="18" cy="19" r=".8"/></svg></span><span class="node-title">OMV NAS</span><span class="node-sub" id="map-nas-sub">Advisor host</span></div>
+            </div>
+            <svg id="map-fan" class="map-fan" aria-hidden="true"></svg>
+            <div class="map-leaves" id="map-leaves"></div>
+            <div class="map-caption"><span class="caption-dot"></span><span id="map-caption-text">Lines join what was actually measured. Switches, access points and the shared LAN segment between these hosts are not drawn.</span><span id="map-extra"></span></div>
           </div>
           <div class="map-footer"><span><span class="footer-led"></span> MAP UPDATES AUTOMATICALLY</span><span id="map-footer-time">Waiting for first report</span></div>
           <div class="device-controls"><div class="device-controls-copy"><strong>This browser’s device</strong><span>Set the link type yourself; the browser cannot detect it reliably.</span></div><div class="device-controls-fields"><input id="device-name" aria-label="Name for this device" maxlength="40"><select id="connection-type" aria-label="Connection type for this device"><option>Unknown</option><option>Wi-Fi</option><option>Ethernet</option><option>Powerline</option></select><button id="save-device" class="small-button">Save device</button></div></div>
