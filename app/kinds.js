@@ -11,6 +11,7 @@ const RULES = [
   { kind: 'plug', pattern: /\bhs1\d\d\b|\bkp1\d\d\b|kasa|tapo|shelly|smart ?plug|wemo/i },
   { kind: 'bulb', pattern: /lifx|hue|tradfri|bulb|lamp/i },
   { kind: 'speaker', pattern: /sonos|homepod|echo|alexa/i },
+  { kind: 'TV', pattern: /toshiba|bravia|hisense|tcl|philips.*tv|lg.*(oled|webos)|samsung.*tv|skyworth|sharp/i },
   { kind: 'media player', pattern: /shield|roku|fire ?tv|chromecast|apple ?tv|kodi/i },
   { kind: 'IR blaster', pattern: /rmmini|rm ?mini|broadlink/i },
   { kind: 'watch', pattern: /watch/i },
@@ -53,6 +54,7 @@ function classifyDevice({ hostname = '', label = '', model = '', services = [], 
   const server = String(upnpServer || '');
   if (/sonos/i.test(server)) return { kind: 'speaker', evidence: 'ssdp Sonos' };
   if (/printer|cups|ipp/i.test(server)) return { kind: 'printer', evidence: 'ssdp printer' };
+  if (/toshiba|bravia|webos|tizen|hisense|tcl/i.test(server)) return { kind: 'TV', evidence: 'ssdp TV' };
 
   const announced = (services || []).map(service => String(service).toLowerCase());
   for (const rule of SERVICE_KINDS) {
