@@ -51,13 +51,15 @@ checkout_ref() {
   git fetch -q origin --prune
   if git rev-parse --verify --quiet "origin/$ref" >/dev/null; then
     target="origin/$ref"
+    # Stay on the branch so `git status` on the NAS reads sanely afterwards.
+    git checkout -q -B "$ref" "$target"
   elif git rev-parse --verify --quiet "$ref" >/dev/null; then
     target="$ref"
+    git checkout -q --detach "$target"   # a SHA is not a branch
   else
     echo "FATAL: $ref does not exist" >&2
     exit 1
   fi
-  git checkout -q --detach "$target"
   git reset -q --hard "$target"
   git log --oneline -1
 }
