@@ -3,7 +3,7 @@ RUN apk add --no-cache iputils \
     && mkdir -p /data \
     && chown node:node /data
 WORKDIR /app
-COPY package.json server.js ./
+COPY package.json server.js oui.js ./
 COPY public ./public
 ENV PORT=8090 DATA_DIR=/data BIND_HOST=0.0.0.0
 USER node

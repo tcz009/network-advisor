@@ -7,3 +7,50 @@
 button,input,select{font:inherit}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #a4f4d6;outline-offset:3px;box-shadow:0 0 0 5px #7ce0be20}.rail-button:focus-visible{outline-offset:2px}.map-panel,.devices-panel{scroll-margin-top:18px}.table-secondary{display:block;color:#80919a;font-size:8px;margin-top:3px;white-space:normal}.device-cell small{white-space:nowrap}.metric-card,.panel{box-shadow:0 8px 24px #00000012}
 @media(min-width:1400px){.metric-card{padding:19px 21px;min-height:126px}.metric-label{font-size:11px}.metric-value{font-size:31px}.metric-foot{font-size:12px}.panel-heading h2{font-size:19px}.map-stage{height:420px}.node-title{font-size:13px}.node-sub{font-size:11px}.client-name{font-size:12px}.client-rtt{font-size:11px}.map-caption{font-size:10px}.map-footer{font-size:10px}.finding strong,.empty-finding strong{font-size:13px}.finding p,.empty-finding p{font-size:12px}.advisor-note{font-size:11px}.device-controls-copy strong{font-size:12px}.device-controls-copy span{font-size:10px}.device-controls-fields input,.device-controls-fields select{font-size:12px;height:36px}.small-button{height:36px;font-size:11px}.page-footer{font-size:10px}td{font-size:12px}th{font-size:10px}.table-secondary{font-size:10px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}.pulse-dot.offline{background:var(--red);box-shadow:0 0 8px #f080808c}
+
+/* ---- Additions: response trend, sensors, neighbour labels ---- */
+.trend-panel,.agents-panel{margin:18px 0 0}
+.trend-body{display:grid;gap:10px;padding:2px 0 4px}
+.trend-row{display:grid;grid-template-columns:96px 1fr 76px;align-items:center;gap:12px}
+.trend-label{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.trend-value{font-family:var(--mono);font-size:12px;text-align:right;color:var(--text)}
+.sparkline{width:100%;height:44px;display:block;overflow:visible}
+.spark-line{fill:none;stroke:var(--mint);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.spark-area{fill:rgba(124,224,190,.12);stroke:none}
+.arp-row{flex-wrap:wrap;gap:4px}
+.arp-row small{flex-basis:100%;text-align:right;color:var(--dim)}
+@media (max-width:720px){.trend-row{grid-template-columns:76px 1fr 62px}}
+
+/* ---- Data-driven map: spine, fan connectors, leaf cards ---- */
+.map-stage{height:auto}
+.map-spine{position:relative;height:300px}
+.map-fan{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;overflow:visible}
+.fan-line{fill:none;stroke:#44605c;stroke-width:1.4}
+.fan-line-dim{stroke-dasharray:4 5;stroke:#3a4b56}
+.map-leaves{position:relative;z-index:2;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:10px 12px 34px}
+.map-leaf{display:flex;flex-direction:column;align-items:center;gap:1px;width:132px;padding:8px 6px;border:1px solid #22303b;border-radius:8px;background:#141f29}
+.map-leaf.sensor{border-color:#2c4a44}
+.map-leaf.offline{opacity:.55}
+.map-leaf.more{border-style:dashed;width:auto;padding:8px 12px}
+.map-leaf .leaf-icon{font-size:11px;color:var(--mint);line-height:1}
+.map-leaf .leaf-name{font-size:10px;font-weight:600;color:var(--text);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.map-leaf .leaf-sub{font-size:8px;color:#80919a;text-align:center;line-height:1.3}
+@media (max-width:720px){.map-leaf{width:112px}.map-leaf .leaf-name{max-width:100px}}
+
+/* ---- Device row actions ---- */
+.nodes-actions{display:flex;align-items:center;gap:8px}
+.nodes-actions .small-button{font-size:9px;padding:4px 8px}
+.row-actions{width:26px;text-align:right}
+.row-delete{background:transparent;border:1px solid #2b3b47;color:#91a2ad;border-radius:6px;width:20px;height:20px;line-height:1;cursor:pointer;font-size:12px}
+.row-delete:hover{border-color:#f08080;color:#f08080}
+.row-delete:disabled{opacity:.4;cursor:default}
+.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* Compact chips for devices that are seen but do not report themselves. */
+.map-leaf.device{width:auto;max-width:180px;flex-direction:row;flex-wrap:wrap;align-items:center;gap:2px 6px;padding:6px 9px;background:#121b23;border-color:#1e2b35}
+.map-leaf.device .leaf-icon{color:#4d6b73;font-size:13px}
+.map-leaf.device .leaf-name{font-size:9px;font-weight:500;max-width:150px}
+.map-leaf.device .leaf-sub{font-size:8px;color:#657681;text-align:left}
+
+/* Rows need vertical room for the bus line that runs above each of them. */
+.map-leaves{column-gap:8px;row-gap:26px;padding-top:18px}

@@ -9,6 +9,12 @@ services:
       BIND_HOST: 0.0.0.0
       CHECK_TARGET: "1.1.1.1"
       CHECK_HOSTNAME: "cloudflare.com"
+      # Leave both unset for a purely passive hub on a trusted LAN.
+      # SCAN_SUBNET turns on an ICMP sweep of your own range, e.g. 192.168.1.0/24.
+      SCAN_SUBNET: "${SCAN_SUBNET:-}"
+      # Required before any Pi agent may report in. Generate one with:
+      #   openssl rand -hex 24
+      AGENT_TOKEN: "${AGENT_TOKEN:-}"
     cap_drop:
       - ALL
     cap_add:
@@ -21,6 +27,9 @@ services:
     volumes:
       - network-advisor-data:/data
     restart: unless-stopped
+    labels:
+      # The image is built locally, so there is nothing for Watchtower to pull.
+      com.centurylinklabs.watchtower.enable: "false"
 
 volumes:
   network-advisor-data:

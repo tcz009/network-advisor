@@ -4,3 +4,7 @@ work/
 app/data/
 app/node_modules/
 .DS_Store
+
+# Local configuration (contains the agent token)
+.env
+app/.env

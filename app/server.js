@@ -1,140 +1,821 @@
+'use strict';
+
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const dns = require('node:dns');
+const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
-const dns = require('node:dns').promises;
+const { describeMac } = require('./oui');
 
 const exec = promisify(execFile);
+
 const PORT = Number(process.env.PORT || 8090);
 const BIND_HOST = process.env.BIND_HOST || '0.0.0.0';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'nodes.json');
+const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
+const AGENTS_FILE = path.join(DATA_DIR, 'agents.json');
 const TARGET = process.env.CHECK_TARGET || '1.1.1.1';
 const HOSTNAME = process.env.CHECK_HOSTNAME || 'cloudflare.com';
-const publicDir = path.join(__dirname, 'public');
+// Active discovery is opt-in: with SCAN_SUBNET unset the app stays passive and
+// only reports what the NAS has recently talked to.
+const SCAN_SUBNET = process.env.SCAN_SUBNET || '';
+const SCAN_MIN_INTERVAL_MS = 30_000;
+
+// Agent mode turns the same image into a vantage point that pushes its own view
+// to a hub. It opens no ports, so it is safe to run beside Pi-hole or a router.
+const ROLE = (process.env.ROLE || 'hub').toLowerCase();
+const AGENT_TOKEN = process.env.AGENT_TOKEN || '';
+const ADVISOR_HUB = (process.env.ADVISOR_HUB || '').replace(/\/+$/, '');
+const AGENT_NAME = process.env.AGENT_NAME || os.hostname();
+const AGENT_INTERVAL_MS = Math.max(15_000, Number(process.env.AGENT_INTERVAL_MS) || 30_000);
+const AGENT_ONLINE_MS = 90_000;
+// A sensor that stops reporting keeps its row but stops contributing devices,
+// so a decommissioned Pi cannot leave phantom "seen by" tags on the map.
+const AGENT_DEVICE_TTL_MS = 10 * 60_000;
+
+const HISTORY_LIMIT = 288;
+// Browser nodes are re-created automatically when a device comes back, so old
+// ones are safe to drop. Without this the device list grows without bound.
+const NODE_TTL_MS = 7 * 24 * 60 * 60_000;
+const MAX_NODES = 200;
+const PUBLIC_DIR = path.join(__dirname, 'public');
+
+const MIME = { '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer' };
+const CONTAINER_IFACE = /^(docker0|docker-|veth|virbr|vmnet|vboxnet|cni|flannel|cali|lxcbr|lxdbr|podman|tun\d|tap\d|wg\d|tailscale|zt)/i;
+const DOCKER_BRIDGE_IFACE = /^br-[0-9a-f]{12}$/i;
+const MAX_ARP_HOSTNAME_LOOKUPS = 16;
+const VERSION = require('./package.json').version;
+
 let nodes = Object.create(null);
+let agents = Object.create(null);
+let history = [];
 let lastCheck = null;
+let lastScan = null;
 let checkInFlight = null;
+let saveTimer = null;
+const HOST_CACHE = new Map();
 
-try {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  Object.assign(nodes, JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
-} catch { nodes = Object.create(null); }
-for (const node of Object.values(nodes)) delete node.userAgent;
+/* ------------------------------------------------------------------ helpers */
 
-function saveNodes() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(DATA_FILE, JSON.stringify(nodes, null, 2));
-}
-
-function gatewayAddress() {
-  try {
-    const lines = fs.readFileSync('/proc/net/route', 'utf8').trim().split('\n').slice(1);
-    const route = lines.map(line => line.trim().split(/\s+/)).find(parts => parts[1] === '00000000' && (parseInt(parts[3], 16) & 2));
-    if (!route) return null;
-    const hex = route[2];
-    return [0, 2, 4, 6].map(i => parseInt(hex.slice(i, i + 2), 16)).reverse().join('.');
-  } catch { return null; }
-}
-
-function ping(host) {
-  if (!host) return Promise.resolve({ ok: false, avgMs: null, lossPct: null, error: 'No gateway found' });
-  return exec('ping', ['-c', '3', '-W', '2', host], { timeout: 9000 })
-    .then(({ stdout }) => parsePing(stdout))
-    .catch(err => {
-      // ping exits non-zero when any probes are lost; its stdout can still contain
-      // valid replies and the average RTT, which should not be discarded.
-      const parsed = parsePing(`${err.stdout || ''} ${err.stderr || ''}`);
-      return { ...parsed, error: parsed.avgMs === null ? 'No ping reply' : (parsed.lossPct > 0 ? 'Some ping replies were lost' : null) };
-    });
-}
-
-function parsePing(output) {
-  const loss = output.match(/([\d.]+)% packet loss/);
-  const timing = output.match(/(?:round-trip|rtt) min\/avg\/max(?:\/mdev)? = [\d.]+\/([\d.]+)\//);
-  const lossPct = loss ? Number(loss[1]) : null;
-  const avgMs = timing ? Number(timing[1]) : null;
-  return { ok: avgMs !== null && lossPct === 0, reachable: avgMs !== null, avgMs, lossPct, error: avgMs === null ? 'No ping reply' : (lossPct > 0 ? 'Some ping replies were lost' : null) };
-}
-
-function arpDevices() {
-  try {
-    const rows = fs.readFileSync('/proc/net/arp', 'utf8').trim().split('\n').slice(1);
-    return rows.map(row => {
-      const [ip, , flags, mac, , iface] = row.trim().split(/\s+/);
-      if (!mac || mac === '00:00:00:00:00:00' || parseInt(flags, 16) === 0) return null;
-      return { ip, mac, iface };
-    }).filter(Boolean);
-  } catch { return []; }
-}
-
-function runCheck() {
-  if (checkInFlight) return checkInFlight;
-  checkInFlight = (async () => {
-    const started = Date.now();
-    const gateway = gatewayAddress();
-    const [router, internet, dnsResult] = await Promise.all([
-      ping(gateway), ping(TARGET),
-      dns.lookup(HOSTNAME).then(result => ({ ok: true, address: result.address })).catch(() => ({ ok: false, address: null }))
-    ]);
-    lastCheck = {
-      checkedAt: new Date().toISOString(), durationMs: Date.now() - started,
-      gateway, router, target: TARGET, internet, hostname: HOSTNAME, dns: dnsResult,
-      arp: arpDevices(), source: 'Checks run from the NAS over its Ethernet connection.'
-    };
-    return lastCheck;
-  })();
-  return checkInFlight.finally(() => { checkInFlight = null; });
+function cleanText(value, max = 50) {
+  return String(value || '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, max);
 }
 
 function json(res, status, body) {
   const payload = JSON.stringify(body);
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(payload), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer' });
+  res.writeHead(status, {
+    ...SECURITY_HEADERS,
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(payload),
+    'Cache-Control': 'no-store'
+  });
   res.end(payload);
 }
 
-function readBody(req) {
+// Decoding a hostile path such as /%zz throws URIError. Left unguarded that
+// rejection escaped the request handler and took the whole process down.
+function decodePathname(rawPath) {
+  try {
+    return { ok: true, value: decodeURIComponent(rawPath) };
+  } catch {
+    return { ok: false, value: null };
+  }
+}
+
+function resolvePublicFile(requested) {
+  const name = requested === '/' ? 'index.html' : String(requested).replace(/^\/+/, '');
+  const file = path.resolve(PUBLIC_DIR, name);
+  if (file !== PUBLIC_DIR && !file.startsWith(PUBLIC_DIR + path.sep)) return null;
+  return file;
+}
+
+function httpError(message, status) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+function readBody(req, limit = 8192) {
   return new Promise((resolve, reject) => {
     let raw = '';
-    req.on('data', chunk => { raw += chunk; if (raw.length > 8192) reject(new Error('Request too large')); });
-    req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('Invalid JSON')); } });
-    req.on('error', reject);
+    let settled = false;
+    req.on('data', chunk => {
+      if (settled) return;
+      raw += chunk;
+      if (raw.length > limit) {
+        // Stop buffering immediately and drain, otherwise a client can keep
+        // growing memory after we have already decided to refuse the request.
+        settled = true;
+        reject(httpError('Request too large', 413));
+        req.resume();
+      }
+    });
+    req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      try { resolve(raw ? JSON.parse(raw) : {}); }
+      catch { reject(httpError('Invalid JSON', 400)); }
+    });
+    req.on('error', err => { if (!settled) { settled = true; reject(err); } });
   });
 }
 
 function readRaw(req, maxBytes = 2 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let bytes = 0;
-    req.on('data', chunk => { bytes += chunk.length; if (bytes > maxBytes) reject(new Error('Upload limit exceeded')); });
-    req.on('end', () => resolve(bytes));
-    req.on('error', reject);
+    let settled = false;
+    req.on('data', chunk => {
+      if (settled) return;
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        settled = true;
+        reject(httpError('Upload limit exceeded', 413));
+        req.resume();
+      }
+    });
+    req.on('end', () => { if (!settled) { settled = true; resolve(bytes); } });
+    req.on('error', err => { if (!settled) { settled = true; reject(err); } });
   });
 }
 
-function cleanText(value, max = 50) {
-  return String(value || '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, max);
+/* --------------------------------------------------------- parsing helpers */
+
+function parsePing(output) {
+  const text = String(output || '');
+  const loss = text.match(/([\d.]+)% packet loss/);
+  const timing = text.match(/(?:round-trip|rtt) min\/avg\/max(?:\/mdev)? = [\d.]+\/([\d.]+)\//);
+  const lossPct = loss ? Number(loss[1]) : null;
+  const avgMs = timing ? Number(timing[1]) : null;
+  return {
+    ok: avgMs !== null && lossPct === 0,
+    reachable: avgMs !== null,
+    avgMs,
+    lossPct,
+    error: avgMs === null ? 'No ping reply' : (lossPct > 0 ? 'Some ping replies were lost' : null)
+  };
 }
 
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+// /proc/net/route columns:
+// Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
+// Destination 00000000 is the default route; the gateway is little-endian hex.
+function parseGatewayRouteList(table) {
+  const rows = String(table || '').trim().split('\n').slice(1);
+  const found = [];
+  for (const row of rows) {
+    const parts = row.trim().split(/\s+/);
+    if (parts.length < 8) continue;
+    const [iface, destination, gateway, flagsHex, , , metricRaw] = parts;
+    if (destination !== '00000000') continue;
+    const flags = parseInt(flagsHex, 16);
+    if (!Number.isFinite(flags)) continue;
+    if (!(flags & 0x1) || !(flags & 0x2)) continue; // RTF_UP | RTF_GATEWAY
+    const octets = [0, 2, 4, 6].map(i => parseInt(gateway.slice(i, i + 2), 16));
+    if (octets.length !== 4 || octets.some(n => !Number.isFinite(n) || n < 0 || n > 255)) continue;
+    const address = octets.reverse().join('.');
+    found.push({ address, iface, metric: Number.isFinite(Number(metricRaw)) ? Number(metricRaw) : Number.MAX_SAFE_INTEGER });
+  }
+  return found.sort((a, b) => a.metric - b.metric);
+}
+
+function parseGatewayRoutes(table) {
+  return parseGatewayRouteList(table)[0] || null;
+}
+
+// Prefer the lowest-metric default that is not a tunnel. The tunnel is only
+// reported separately when there is also a LAN default to compare against,
+// otherwise the same address would be described twice.
+function chooseGateway(routes) {
+  if (!routes.length) return null;
+  const tunnel = routes.find(route => isTunnelInterface(route.iface)) || null;
+  const lan = routes.find(route => !isTunnelInterface(route.iface)) || null;
+  const primary = lan || tunnel;
+  return {
+    address: primary.address,
+    iface: primary.iface,
+    metric: primary.metric,
+    isTunnel: isTunnelInterface(primary.iface),
+    vpn: lan && tunnel ? { address: tunnel.address, iface: tunnel.iface } : null
+  };
+}
+
+function parseArpTable(table) {
+  return String(table || '').trim().split('\n').slice(1).map(row => {
+    const parts = row.trim().split(/\s+/);
+    if (parts.length < 6) return null;
+    const [ip, , flags, mac, , iface] = parts;
+    if (!mac || mac === '00:00:00:00:00:00') return null;
+    if (parseInt(flags, 16) === 0) return null;
+    return { ip, mac, iface };
+  }).filter(Boolean);
+}
+
+// A host running a VPN often has its default route pointed at the tunnel, so
+// "gateway" is then a VPN peer rather than the LAN router. Keep the two apart.
+const TUNNEL_IFACE = /^(tun\d|tap\d|wg\d|ppp\d|ipsec\d|sit\d|gre\d|nordlynx|proton)/i;
+
+function isTunnelInterface(name) {
+  return TUNNEL_IFACE.test(String(name || ''));
+}
+
+function isContainerInterface(name) {
+  if (!name) return true;
+  return CONTAINER_IFACE.test(name) || DOCKER_BRIDGE_IFACE.test(name);
+}
+
+// Docker and Tailscale interfaces show up in the host neighbour table once the
+// container shares the host network namespace. Reporting them as devices made
+// the map mostly containers, so they are dropped unless nothing else is left.
+function neighbourDevices(table, gatewayIface) {
+  const rows = parseArpTable(table);
+  const onLan = rows.filter(row => !isContainerInterface(row.iface));
+  const pool = onLan.length ? onLan : rows;
+  const onGatewayIf = gatewayIface ? pool.filter(row => row.iface === gatewayIface) : [];
+  const chosen = onGatewayIf.length ? onGatewayIf : pool;
+  const seen = new Set();
+  const devices = [];
+  for (const row of chosen) {
+    if (seen.has(row.ip)) continue;
+    seen.add(row.ip);
+    devices.push({ ...row, label: describeMac(row.mac) });
+  }
+  return devices.sort((a, b) => ipToNumber(a.ip) - ipToNumber(b.ip));
+}
+
+function ipToNumber(ip) {
+  const parts = String(ip || '').split('.').map(Number);
+  if (parts.length !== 4 || parts.some(n => !Number.isFinite(n))) return 0;
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+}
+
+function numberToIp(n) {
+  return [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+}
+
+// A /22 is 1024 addresses; refuse anything wider so a typo cannot turn into a
+// huge ICMP blast.
+function parseCidr(cidr) {
+  const match = /^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/.exec(String(cidr || '').trim());
+  if (!match) return null;
+  const octets = match[1].split('.').map(Number);
+  const prefix = Number(match[2]);
+  if (octets.some(o => !Number.isFinite(o) || o < 0 || o > 255)) return null;
+  if (prefix < 22 || prefix > 30) return null;
+  const base = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  const network = (base & mask) >>> 0;
+  const total = 2 ** (32 - prefix);
+  const hosts = [];
+  for (let i = 1; i < total - 1; i++) hosts.push(numberToIp((network + i) >>> 0));
+  return { network: numberToIp(network), prefix, hosts };
+}
+
+function summariseLoad(loadText, cores) {
+  const first = String(loadText || '').trim().split(/\s+/)[0];
+  if (!first) return null;
+  const load1 = Number(first);
+  if (!Number.isFinite(load1) || !cores) return null;
+  const ratio = load1 / cores;
+  return {
+    load1: Math.round(load1 * 100) / 100,
+    cores,
+    ratio: Math.round(ratio * 100) / 100,
+    // Above roughly one runnable task per core, ping timings start reflecting
+    // CPU queueing rather than the wire.
+    busy: ratio >= 0.9
+  };
+}
+
+/* ------------------------------------------------------------ host readings */
+
+// Every address this host holds, so a map can tell a sensor's own entries in the
+// neighbour table apart from a different device on the same LAN. A Pi behind a
+// VPN has several, and its LAN address is the one other hosts will see.
+function localAddresses() {
+  const found = [];
+  for (const entries of Object.values(os.networkInterfaces() || {})) {
+    for (const entry of entries || []) {
+      if (entry.family === 'IPv4' && !entry.internal && !found.includes(entry.address)) found.push(entry.address);
+    }
+  }
+  return found;
+}
+
+function readGateway() {
+  try {
+    return chooseGateway(parseGatewayRouteList(fs.readFileSync('/proc/net/route', 'utf8')));
+  } catch {
+    return null;
+  }
+}
+
+function readArpTable() {
+  try {
+    return fs.readFileSync('/proc/net/arp', 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+function readLoad() {
+  try {
+    return summariseLoad(fs.readFileSync('/proc/loadavg', 'utf8'), os.cpus().length);
+  } catch {
+    return null;
+  }
+}
+
+function ping(host) {
+  if (!host) return Promise.resolve({ ok: false, reachable: false, avgMs: null, lossPct: null, error: 'No gateway found' });
+  return exec('ping', ['-c', '3', '-W', '2', host], { timeout: 9000 })
+    .then(({ stdout }) => parsePing(stdout))
+    .catch(err => {
+      // ping exits non-zero when any probe is lost, and its stdout can still
+      // hold valid replies worth keeping.
+      const parsed = parsePing(`${err.stdout || ''} ${err.stderr || ''}`);
+      return {
+        ...parsed,
+        error: parsed.avgMs === null
+          ? 'No ping reply'
+          : (parsed.lossPct > 0 ? 'Some ping replies were lost' : null)
+      };
+    });
+}
+
+function hostnameFor(ip) {
+  const cached = HOST_CACHE.get(ip);
+  const now = Date.now();
+  if (cached && now - cached.at < 10 * 60_000) return Promise.resolve(cached.name);
+  return Promise.race([
+    dns.promises.reverse(ip),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 700).unref())
+  ]).then(names => {
+    const name = names && names.length ? String(names[0]).replace(/\.$/, '') : null;
+    HOST_CACHE.set(ip, { name, at: now });
+    return name;
+  }).catch(() => {
+    HOST_CACHE.set(ip, { name: null, at: now });
+    return null;
+  });
+}
+
+async function enrichDevices(devices) {
+  const targets = devices.slice(0, MAX_ARP_HOSTNAME_LOOKUPS);
+  const names = await Promise.all(targets.map(device => hostnameFor(device.ip)));
+  const byIp = new Map(targets.map((device, index) => [device.ip, names[index]]));
+  return devices.map(device => ({ ...device, hostname: byIp.get(device.ip) || null }));
+}
+
+async function pingSweep(hosts, concurrency = 32) {
+  let cursor = 0;
+  let answered = 0;
+  const worker = async () => {
+    while (cursor < hosts.length) {
+      const host = hosts[cursor++];
+      try {
+        await exec('ping', ['-c', '1', '-W', '1', host], { timeout: 1500 });
+        answered++;
+      } catch { /* no reply: that is the normal case for an unused address */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, hosts.length) }, worker));
+  return answered;
+}
+
+/* ------------------------------------------------------------------ storage */
+
+function flushState() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(DATA_FILE, JSON.stringify(nodes, null, 2));
+    fs.writeFileSync(AGENTS_FILE, JSON.stringify(agents, null, 2));
+  } catch (err) {
+    console.error('Could not save state:', err.message);
+  }
+}
+
+function scheduleSave() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    flushState();
+  }, 500);
+  saveTimer.unref?.();
+}
+
+function saveHistory() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history));
+  } catch (err) {
+    console.error('Could not save history:', err.message);
+  }
+}
+
+function loadState() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    Object.assign(nodes, JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+  } catch { nodes = Object.create(null); }
+  for (const node of Object.values(nodes)) delete node.userAgent;
+  try {
+    Object.assign(agents, JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8')));
+  } catch { agents = Object.create(null); }
+  trimNodes();
+  try {
+    const saved = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+    if (Array.isArray(saved)) history = saved.slice(-HISTORY_LIMIT);
+  } catch { history = []; }
+}
+
+function pruneNodes(map, { now = Date.now(), ttlMs = NODE_TTL_MS, max = MAX_NODES } = {}) {
+  const cutoff = now - ttlMs;
+  for (const node of Object.values(map)) {
+    if (!node.lastSeen || node.lastSeen < cutoff) delete map[node.id];
+  }
+  const entries = Object.values(map);
+  if (entries.length > max) {
+    entries
+      .sort((a, b) => (a.lastSeen || 0) - (b.lastSeen || 0))
+      .slice(0, entries.length - max)
+      .forEach(node => { delete map[node.id]; });
+  }
+  return map;
+}
+
+function trimNodes() {
+  pruneNodes(nodes);
+}
+
+/* ------------------------------------------------------------------- checks */
+
+// One reading of this host: used both by a hub check and by an agent report so
+// the two never drift apart.
+function hubHost() {
+  if (!ADVISOR_HUB) return null;
+  try {
+    return new URL(ADVISOR_HUB).hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+async function collectReadings() {
+  const gateway = readGateway();
+  const target = hubHost();
+  const [router, internet, dnsResult, hubPing] = await Promise.all([
+    ping(gateway?.address), ping(TARGET),
+    dns.promises.lookup(HOSTNAME)
+      .then(result => ({ ok: true, address: result.address }))
+      .catch(() => ({ ok: false, address: null })),
+    target ? ping(target) : Promise.resolve(null)
+  ]);
+  const devices = await enrichDevices(neighbourDevices(readArpTable(), gateway?.iface));
+  return {
+    addresses: localAddresses(),
+    gateway: gateway?.address || null,
+    iface: gateway?.iface || null,
+    tunnel: Boolean(gateway?.isTunnel),
+    vpn: gateway?.vpn || null,
+    router,
+    internet,
+    dns: dnsResult,
+    hub: hubPing ? { host: target, ...hubPing } : null,
+    load: readLoad(),
+    devices
+  };
+}
+
+function runCheck() {
+  if (checkInFlight) return checkInFlight;
+  checkInFlight = (async () => {
+    const started = Date.now();
+    const readings = await collectReadings();
+    lastCheck = {
+      checkedAt: new Date().toISOString(),
+      durationMs: Date.now() - started,
+      gateway: readings.gateway,
+      iface: readings.iface,
+      tunnel: readings.tunnel,
+      vpn: readings.vpn,
+      router: readings.router,
+      target: TARGET,
+      internet: readings.internet,
+      hostname: HOSTNAME,
+      dns: readings.dns,
+      load: readings.load,
+      arp: readings.devices,
+      source: 'Checks run from the NAS over its Ethernet connection.'
+    };
+    history.push({
+      at: lastCheck.checkedAt,
+      routerMs: readings.router.avgMs,
+      routerLoss: readings.router.lossPct,
+      internetMs: readings.internet.avgMs,
+      internetLoss: readings.internet.lossPct,
+      dnsOk: Boolean(readings.dns.ok),
+      load1: readings.load?.load1 ?? null,
+      devices: readings.devices.length
+    });
+    if (history.length > HISTORY_LIMIT) history = history.slice(-HISTORY_LIMIT);
+    saveHistory();
+    return lastCheck;
+  })();
+  return checkInFlight.finally(() => { checkInFlight = null; });
+}
+
+async function runScan() {
+  const parsed = parseCidr(SCAN_SUBNET);
+  if (!parsed) {
+    return { enabled: false, error: SCAN_SUBNET ? 'SCAN_SUBNET must be a CIDR between /22 and /30' : 'Active discovery is off' };
+  }
+  if (lastScan && Date.now() - lastScan.finishedAt < SCAN_MIN_INTERVAL_MS) {
+    return { ...lastScan, cached: true };
+  }
+  const started = Date.now();
+  const answered = await pingSweep(parsed.hosts);
+  const gateway = readGateway();
+  const devices = await enrichDevices(neighbourDevices(readArpTable(), gateway?.iface));
+  lastScan = {
+    enabled: true,
+    subnet: `${parsed.network}/${parsed.prefix}`,
+    probed: parsed.hosts.length,
+    answered,
+    devices: devices.length,
+    arp: devices,
+    tookMs: Date.now() - started,
+    finishedAt: Date.now()
+  };
+  return lastScan;
+}
+
+/* ------------------------------------------------------------------- agents */
+
+const IPV4 = /^(\d{1,3}\.){3}\d{1,3}$/;
+
+function isIpv4(value) {
+  return IPV4.test(String(value || '')) && String(value).split('.').every(part => Number(part) <= 255);
+}
+
+// Constant-time comparison so a token cannot be discovered by timing responses.
+function agentTokenMatches(provided, expected) {
+  if (!expected) return false;
+  const a = Buffer.from(String(provided || ''));
+  const b = Buffer.from(String(expected));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function cleanPingValue(value) {
+  if (!value || typeof value !== 'object') {
+    return { ok: false, reachable: false, avgMs: null, lossPct: null, error: 'Not measured' };
+  }
+  const numeric = v => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v * 1000) / 1000 : null);
+  const avgMs = numeric(value.avgMs);
+  return {
+    ok: Boolean(value.ok),
+    reachable: typeof value.reachable === 'boolean' ? value.reachable : avgMs !== null,
+    avgMs,
+    lossPct: numeric(value.lossPct),
+    error: value.error ? cleanText(value.error, 60) : null
+  };
+}
+
+function cleanDeviceList(list) {
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, 512).map(entry => {
+    if (!entry || typeof entry !== 'object') return null;
+    const ip = String(entry.ip || '').trim();
+    if (!isIpv4(ip)) return null;
+    const mac = String(entry.mac || '').toLowerCase();
+    if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return null;
+    return {
+      ip,
+      mac,
+      iface: cleanText(entry.iface, 20) || null,
+      // Trust our own table over whatever the agent labelled it.
+      label: describeMac(mac) || (entry.label ? cleanText(entry.label, 40) : null),
+      hostname: entry.hostname ? cleanText(entry.hostname, 80) : null
+    };
+  }).filter(Boolean);
+}
+
+function sanitiseReport(body) {
+  if (!body || typeof body !== 'object') throw new Error('Invalid report');
+  const rawName = cleanText(body.name, 40) || 'agent';
+  const load = body.load && typeof body.load === 'object'
+    ? summariseLoad(String(body.load.load1 ?? ''), Number(body.load.cores) || os.cpus().length)
+    : null;
+  return {
+    name: rawName.replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '') || 'agent',
+    label: rawName,
+    version: cleanText(body.version, 20) || null,
+    platform: cleanText(body.platform, 40) || null,
+    addresses: Array.isArray(body.addresses) ? body.addresses.filter(isIpv4).slice(0, 8) : [],
+    gateway: isIpv4(body.gateway) ? body.gateway : null,
+    iface: cleanText(body.iface, 20) || null,
+    tunnel: Boolean(body.tunnel),
+    vpn: body.vpn && isIpv4(body.vpn.address)
+      ? { address: body.vpn.address, iface: cleanText(body.vpn.iface, 20) || null }
+      : null,
+    hub: body.hub && typeof body.hub === 'object'
+      ? { host: cleanText(body.hub.host, 60) || null, ...cleanPingValue(body.hub) }
+      : null,
+    router: cleanPingValue(body.router),
+    internet: cleanPingValue(body.internet),
+    dns: { ok: Boolean(body.dns && body.dns.ok), address: isIpv4(body.dns?.address) ? body.dns.address : null },
+    load,
+    devices: cleanDeviceList(body.devices),
+    uptimeSec: typeof body.uptimeSec === 'number' && body.uptimeSec >= 0 ? Math.round(body.uptimeSec) : null
+  };
+}
+
+function recordAgent(report) {
+  const previous = agents[report.name] || {};
+  agents[report.name] = {
+    ...report,
+    firstSeen: previous.firstSeen || new Date().toISOString(),
+    lastSeen: Date.now()
+  };
+  scheduleSave();
+  return agents[report.name];
+}
+
+function activeAgents() {
+  const now = Date.now();
+  return Object.values(agents)
+    .map(agent => ({
+      ...agent,
+      deviceCount: (agent.devices || []).length,
+      devices: undefined,
+      online: now - agent.lastSeen < AGENT_ONLINE_MS
+    }))
+    .sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name));
+}
+
+// Every vantage point sees a different slice of the LAN. Merging by address
+// shows one device with all the places that saw it, instead of duplicates.
+function mergeDevices(nasDevices, agentMap, { now = Date.now(), ttlMs = AGENT_DEVICE_TTL_MS } = {}) {
+  const byIp = new Map();
+  const add = (device, source) => {
+    if (!device || !device.ip) return;
+    const existing = byIp.get(device.ip);
+    if (!existing) {
+      byIp.set(device.ip, { ...device, seenBy: [source] });
+      return;
+    }
+    if (!existing.seenBy.includes(source)) existing.seenBy.push(source);
+    if (!existing.hostname && device.hostname) existing.hostname = device.hostname;
+    if (!existing.label && device.label) existing.label = device.label;
+  };
+  for (const device of nasDevices || []) add(device, os.hostname());
+  for (const agent of Object.values(agentMap || {})) {
+    if (!agent || now - (agent.lastSeen || 0) > ttlMs) continue;
+    for (const device of agent.devices || []) add(device, agent.label || agent.name);
+  }
+  return [...byIp.values()].sort((a, b) => ipToNumber(a.ip) - ipToNumber(b.ip));
+}
+
+function mergedDevices() {
+  return mergeDevices(lastCheck?.arp, agents);
+}
+
+async function startAgent() {
+  if (!ADVISOR_HUB) {
+    console.error('ROLE=agent needs ADVISOR_HUB pointing at the hub, for example http://192.168.1.179:8090');
+    process.exit(1);
+  }
+  const report = async () => {
+    try {
+      const readings = await collectReadings();
+      const payload = {
+        name: AGENT_NAME,
+        version: VERSION,
+        platform: `${os.type()} ${os.arch()}`,
+        addresses: readings.addresses,
+        gateway: readings.gateway,
+        iface: readings.iface,
+        tunnel: readings.tunnel,
+        vpn: readings.vpn,
+        hub: readings.hub,
+        router: readings.router,
+        internet: readings.internet,
+        dns: readings.dns,
+        load: readings.load,
+        devices: readings.devices,
+        uptimeSec: Math.round(os.uptime())
+      };
+      const response = await fetch(`${ADVISOR_HUB}/api/agents/report`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-advisor-token': AGENT_TOKEN },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10_000)
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(`hub replied ${response.status} ${detail.slice(0, 120)}`);
+      }
+      console.log(`[agent] reported ${readings.devices.length} devices to ${ADVISOR_HUB}`);
+    } catch (err) {
+      console.error('[agent] report failed:', err.message);
+    }
+  };
+  console.log(`Network Advisor agent "${AGENT_NAME}" reporting to ${ADVISOR_HUB} every ${Math.round(AGENT_INTERVAL_MS / 1000)}s`);
+  await report();
+  setInterval(report, AGENT_INTERVAL_MS);
+}
+
+/* ------------------------------------------------------------------ routing */
+
+async function handle(req, res) {
+  const reqUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin) {
     try {
-      if (new URL(req.headers.origin).host !== req.headers.host) return json(res, 403, { error: 'Cross-origin requests are not allowed' });
-    } catch { return json(res, 403, { error: 'Invalid request origin' }); }
+      if (new URL(req.headers.origin).host !== req.headers.host) {
+        return json(res, 403, { error: 'Cross-origin requests are not allowed' });
+      }
+    } catch {
+      return json(res, 403, { error: 'Invalid request origin' });
+    }
   }
-  if (url.pathname === '/api/state' && req.method === 'GET') {
-    if (!lastCheck || Date.now() - new Date(lastCheck.checkedAt).getTime() > 60000) runCheck();
+
+  if (reqUrl.pathname === '/api/state' && req.method === 'GET') {
+    if (!lastCheck || Date.now() - new Date(lastCheck.checkedAt).getTime() > 60_000) {
+      runCheck().catch(err => console.error('Background check failed:', err.message));
+    }
     const now = Date.now();
-    const activeNodes = Object.values(nodes).map(node => ({ ...node, online: now - node.lastSeen < 25000 }));
-    return json(res, 200, { app: 'Network Advisor', version: '0.1.0', host: os.hostname(), gateway: gatewayAddress(), check: lastCheck, nodes: activeNodes, arp: arpDevices() });
+    const activeNodes = Object.values(nodes).map(node => ({ ...node, online: now - node.lastSeen < 25_000 }));
+    const gateway = readGateway();
+    const subnet = parseCidr(SCAN_SUBNET);
+    return json(res, 200, {
+      app: 'Network Advisor',
+      version: VERSION,
+      host: os.hostname(),
+      addresses: localAddresses(),
+      gateway: gateway?.address || null,
+      iface: gateway?.iface || null,
+      load: readLoad(),
+      check: lastCheck,
+      nodes: activeNodes,
+      agents: activeAgents(),
+      devices: mergedDevices(),
+      arp: lastCheck?.arp || neighbourDevices(readArpTable(), gateway?.iface),
+      history: history.slice(-60),
+      scan: { enabled: Boolean(subnet), subnet: subnet ? `${subnet.network}/${subnet.prefix}` : null }
+    });
   }
-  if (url.pathname === '/api/check' && req.method === 'POST') return json(res, 200, await runCheck());
-  if (url.pathname === '/api/pulse' && req.method === 'GET') return json(res, 200, { at: Date.now() });
-  if (url.pathname === '/api/speed/download' && req.method === 'GET') {
-    const bytes = Math.max(256 * 1024, Math.min(8 * 1024 * 1024, Number(url.searchParams.get('bytes')) || 4 * 1024 * 1024));
-    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': bytes, 'Cache-Control': 'no-store, no-cache, must-revalidate', 'Content-Encoding': 'identity', 'X-Content-Type-Options': 'nosniff' });
+
+  if (reqUrl.pathname === '/api/check' && req.method === 'POST') {
+    return json(res, 200, await runCheck());
+  }
+
+  if (reqUrl.pathname === '/api/scan' && req.method === 'POST') {
+    return json(res, 200, await runScan());
+  }
+
+  if (reqUrl.pathname === '/api/history' && req.method === 'GET') {
+    return json(res, 200, { records: history, limit: HISTORY_LIMIT });
+  }
+
+  if (reqUrl.pathname === '/api/agents' && req.method === 'GET') {
+    return json(res, 200, { agents: activeAgents(), onlineWindowMs: AGENT_ONLINE_MS, intake: Boolean(AGENT_TOKEN) });
+  }
+
+  if (reqUrl.pathname === '/api/agents/report' && req.method === 'POST') {
+    if (!AGENT_TOKEN) {
+      return json(res, 403, { error: 'Agent intake is disabled; set AGENT_TOKEN on the hub' });
+    }
+    if (!agentTokenMatches(req.headers['x-advisor-token'], AGENT_TOKEN)) {
+      return json(res, 403, { error: 'Invalid agent token' });
+    }
+    try {
+      const body = await readBody(req, 512 * 1024);
+      const report = sanitiseReport(body);
+      recordAgent(report);
+      return json(res, 200, { ok: true, name: report.name, devices: report.devices.length });
+    } catch (err) {
+      return json(res, err.status || 400, { error: err.message });
+    }
+  }
+
+  if (reqUrl.pathname === '/api/pulse' && req.method === 'GET') {
+    return json(res, 200, { at: Date.now() });
+  }
+
+  if (reqUrl.pathname === '/api/speed/download' && req.method === 'GET') {
+    const bytes = Math.max(256 * 1024, Math.min(8 * 1024 * 1024, Number(reqUrl.searchParams.get('bytes')) || 4 * 1024 * 1024));
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': bytes,
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Content-Encoding': 'identity',
+      'X-Content-Type-Options': 'nosniff'
+    });
     const chunk = Buffer.alloc(64 * 1024);
     let remaining = bytes;
     while (remaining > 0) {
@@ -144,47 +825,155 @@ const server = http.createServer(async (req, res) => {
     }
     return res.end();
   }
-  if (url.pathname === '/api/speed/upload' && req.method === 'POST') {
+
+  if (reqUrl.pathname === '/api/speed/upload' && req.method === 'POST') {
     try {
       const started = Date.now();
       const bytes = await readRaw(req);
       return json(res, 200, { bytes, elapsedMs: Date.now() - started });
-    } catch (err) { return json(res, 413, { error: err.message }); }
+    } catch (err) {
+      return json(res, 413, { error: err.message });
+    }
   }
-  if (url.pathname === '/api/nodes' && req.method === 'POST') {
+
+  if (reqUrl.pathname === '/api/nodes' && req.method === 'POST') {
     try {
       const body = await readBody(req);
       const id = cleanText(body.id, 80);
       if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) return json(res, 400, { error: 'Invalid device id' });
       const previous = Object.hasOwn(nodes, id) ? nodes[id] : {};
-      const incomingSpeedCheck = typeof body.speedCheckedAt === 'string' && Number.isFinite(Date.parse(body.speedCheckedAt)) ? body.speedCheckedAt : null;
-      const measured = (value, previousValue) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : (previousValue ?? null);
+      const incomingSpeedCheck = typeof body.speedCheckedAt === 'string' && Number.isFinite(Date.parse(body.speedCheckedAt))
+        ? body.speedCheckedAt : null;
+      const measured = (value, previousValue) => typeof value === 'number' && Number.isFinite(value) && value >= 0
+        ? value : (previousValue ?? null);
       nodes[id] = {
-        id, name: cleanText(body.name || previous.name || 'My device', 40),
+        id,
+        name: cleanText(body.name || previous.name || 'My device', 40),
         connection: ['Wi-Fi', 'Ethernet', 'Powerline', 'Unknown'].includes(body.connection) ? body.connection : (previous.connection || 'Unknown'),
         deviceType: cleanText(body.deviceType || previous.deviceType || 'Device', 30),
-        lastSeen: Date.now(), browserRttMs: measured(body.browserRttMs, previous.browserRttMs),
-        downMbps: measured(body.downMbps, previous.downMbps), upMbps: measured(body.upMbps, previous.upMbps),
+        lastSeen: Date.now(),
+        browserRttMs: measured(body.browserRttMs, previous.browserRttMs),
+        downMbps: measured(body.downMbps, previous.downMbps),
+        upMbps: measured(body.upMbps, previous.upMbps),
         speedCheckedAt: incomingSpeedCheck || previous.speedCheckedAt || null,
         firstSeen: previous.firstSeen || new Date().toISOString()
       };
-      saveNodes();
+      trimNodes();
+      scheduleSave();
       return json(res, 200, { ok: true, node: nodes[id] });
-    } catch (err) { return json(res, 400, { error: err.message }); }
-  }
-  if (url.pathname.startsWith('/api/nodes/') && req.method === 'DELETE') {
-    const id = decodeURIComponent(url.pathname.slice('/api/nodes/'.length));
-    delete nodes[id]; saveNodes(); return json(res, 200, { ok: true });
+    } catch (err) {
+      return json(res, err.status || 400, { error: err.message });
+    }
   }
 
-  const requested = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
-  const file = path.resolve(publicDir, requested);
-  if (!file.startsWith(publicDir + path.sep)) return json(res, 403, { error: 'Forbidden' });
-  fs.readFile(file, (err, data) => {
-    if (err) return json(res, 404, { error: 'Not found' });
-    const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html';
-    res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer' }); res.end(data);
+  if (reqUrl.pathname.startsWith('/api/nodes/') && req.method === 'DELETE') {
+    // A custom header cannot be set cross-origin without a preflight, which
+    // browsers then block, so this doubles as CSRF protection for the one
+    // destructive endpoint on an otherwise unauthenticated dashboard.
+    if (req.headers['x-advisor-intent'] !== 'delete') {
+      return json(res, 403, { error: 'Missing x-advisor-intent header' });
+    }
+    const decoded = decodePathname(reqUrl.pathname.slice('/api/nodes/'.length));
+    if (!decoded.ok || !/^[A-Za-z0-9_-]{1,80}$/.test(decoded.value)) {
+      return json(res, 400, { error: 'Invalid device id' });
+    }
+    delete nodes[decoded.value];
+    scheduleSave();
+    return json(res, 200, { ok: true });
+  }
+
+  const decodedPath = decodePathname(reqUrl.pathname);
+  if (!decodedPath.ok) return json(res, 400, { error: 'Malformed request path' });
+
+  const file = resolvePublicFile(decodedPath.value);
+  if (!file) return json(res, 403, { error: 'Forbidden' });
+
+  let data;
+  try {
+    data = fs.readFileSync(file);
+  } catch {
+    return json(res, 404, { error: 'Not found' });
+  }
+  const type = MIME[path.extname(file)] || 'text/html';
+  const headers = { ...SECURITY_HEADERS, 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-cache' };
+  if (type === 'text/html') {
+    // Everything is served from disk, so a strict policy costs nothing.
+    headers['Content-Security-Policy'] = "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+  }
+  res.writeHead(200, headers);
+  res.end(data);
+}
+
+const server = http.createServer((req, res) => {
+  handle(req, res).catch(err => {
+    // Never let one bad request become a dead dashboard.
+    console.error('Request failed:', err && err.stack ? err.stack : err);
+    if (!res.headersSent) json(res, 500, { error: 'Internal error' });
+    else res.destroy();
   });
 });
 
-server.listen(PORT, BIND_HOST, () => console.log(`Network Advisor listening on ${BIND_HOST}:${PORT}`));
+/* -------------------------------------------------------------------- start */
+
+server.on('clientError', (err, socket) => {
+  if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+});
+
+process.on('unhandledRejection', reason => {
+  console.error('Unhandled rejection:', reason && reason.stack ? reason.stack : reason);
+});
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      flushState();
+    }
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+  });
+}
+
+if (require.main === module) {
+  loadState();
+  if (ROLE === 'agent') {
+    startAgent().catch(err => {
+      console.error('Agent could not start:', err.message);
+      process.exit(1);
+    });
+  } else {
+    server.listen(PORT, BIND_HOST, () => console.log(`Network Advisor listening on ${BIND_HOST}:${PORT}`));
+  }
+}
+
+module.exports = {
+  server,
+  parsePing,
+  parseGatewayRoutes,
+  parseGatewayRouteList,
+  chooseGateway,
+  isTunnelInterface,
+  parseArpTable,
+  neighbourDevices,
+  pruneNodes,
+  isContainerInterface,
+  cleanText,
+  decodePathname,
+  resolvePublicFile,
+  parseCidr,
+  summariseLoad,
+  ipToNumber,
+  runCheck,
+  runScan,
+  localAddresses,
+  loadState,
+  sanitiseReport,
+  cleanDeviceList,
+  agentTokenMatches,
+  recordAgent,
+  activeAgents,
+  mergeDevices,
+  mergedDevices,
+  collectReadings
+};
