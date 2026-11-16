@@ -4,8 +4,12 @@ RUN apk add --no-cache iputils \
     && mkdir -p /data \
     && chown node:node /data
 WORKDIR /app
-COPY package.json server.js oui.js ./
+# Glob rather than a list: adding app/kasa.js once shipped an image without it
+# and the container crash-looped. The require check below then fails the build
+# instead of the deployment.
+COPY package.json *.js ./
 COPY public ./public
+RUN node -e "require('./server.js'); console.log('modules load')"
 ENV PORT=8090 DATA_DIR=/data BIND_HOST=0.0.0.0
 USER node
 EXPOSE 8090
