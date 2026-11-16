@@ -122,6 +122,33 @@ test('agents feed a merged device list tagged with who saw them', () => {
   assert.equal(pixel.hostname, 'pixel-9.local');
 });
 
+test('devices from a sensor that stopped reporting drop out of the map', () => {
+  const now = Date.now();
+  const agentMap = {
+    fresh: { name: 'fresh', label: 'Fresh', lastSeen: now - 5_000, devices: [{ ip: '192.168.1.41', mac: 'dc:a6:32:11:11:11' }] },
+    stale: { name: 'stale', label: 'Stale', lastSeen: now - 20 * 60_000, devices: [{ ip: '192.168.1.42', mac: 'dc:a6:32:22:22:22' }] }
+  };
+  const merged = advisor.mergeDevices([], agentMap, { now });
+  const ips = merged.map(device => device.ip);
+  assert.deepEqual(ips, ['192.168.1.41']);
+});
+
+test('a sensor inside the TTL still contributes its devices', () => {
+  const now = Date.now();
+  const agentMap = {
+    recent: { name: 'recent', label: 'Recent', lastSeen: now - 9 * 60_000, devices: [{ ip: '192.168.1.43', mac: 'dc:a6:32:33:33:33' }] }
+  };
+  assert.equal(advisor.mergeDevices([], agentMap, { now })[0].ip, '192.168.1.43');
+});
+
+test('the NAS stays in the merged list even when no sensor is contributing', () => {
+  const now = Date.now();
+  const nasDevices = [{ ip: '192.168.1.1', mac: 'b0:be:76:e7:be:8e', label: null }];
+  const merged = advisor.mergeDevices(nasDevices, {}, { now });
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].ip, '192.168.1.1');
+});
+
 test('activeAgents hides the raw device list and flags online state', () => {
   advisor.recordAgent(advisor.sanitiseReport(goodReport));
   const agents = advisor.activeAgents();

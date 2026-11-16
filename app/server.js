@@ -33,6 +33,9 @@ const ADVISOR_HUB = (process.env.ADVISOR_HUB || '').replace(/\/+$/, '');
 const AGENT_NAME = process.env.AGENT_NAME || os.hostname();
 const AGENT_INTERVAL_MS = Math.max(15_000, Number(process.env.AGENT_INTERVAL_MS) || 30_000);
 const AGENT_ONLINE_MS = 90_000;
+// A sensor that stops reporting keeps its row but stops contributing devices,
+// so a decommissioned Pi cannot leave phantom "seen by" tags on the map.
+const AGENT_DEVICE_TTL_MS = 10 * 60_000;
 
 const HISTORY_LIMIT = 288;
 const MAX_NODES = 200;
@@ -622,7 +625,7 @@ function activeAgents() {
 
 // Every vantage point sees a different slice of the LAN. Merging by address
 // shows one device with all the places that saw it, instead of duplicates.
-function mergedDevices() {
+function mergeDevices(nasDevices, agentMap, { now = Date.now(), ttlMs = AGENT_DEVICE_TTL_MS } = {}) {
   const byIp = new Map();
   const add = (device, source) => {
     if (!device || !device.ip) return;
@@ -635,11 +638,16 @@ function mergedDevices() {
     if (!existing.hostname && device.hostname) existing.hostname = device.hostname;
     if (!existing.label && device.label) existing.label = device.label;
   };
-  for (const device of lastCheck?.arp || []) add(device, os.hostname());
-  for (const agent of Object.values(agents)) {
+  for (const device of nasDevices || []) add(device, os.hostname());
+  for (const agent of Object.values(agentMap || {})) {
+    if (!agent || now - (agent.lastSeen || 0) > ttlMs) continue;
     for (const device of agent.devices || []) add(device, agent.label || agent.name);
   }
   return [...byIp.values()].sort((a, b) => ipToNumber(a.ip) - ipToNumber(b.ip));
+}
+
+function mergedDevices() {
+  return mergeDevices(lastCheck?.arp, agents);
 }
 
 async function startAgent() {
@@ -926,6 +934,7 @@ module.exports = {
   agentTokenMatches,
   recordAgent,
   activeAgents,
+  mergeDevices,
   mergedDevices,
   collectReadings
 };

@@ -110,7 +110,7 @@ If a host has no passwordless sudo — a VPN router, for example — agent mode 
 
 That needs no root and touches no system files, which is often the better trade on a host whose job is routing. It does mean `ping` must be allowed to use an ICMP datagram socket: check `sysctl net.ipv4.ping_group_range` includes your user's group, otherwise the sensor reports devices and load but no timings.
 
-A working agent logs `[agent] reported N devices to …` within a few seconds. The dashboard's **Sensors on the LAN** panel lists every agent, and the device list marks which hosts saw each address.
+A working agent logs `[agent] reported N devices to …` within a few seconds. The dashboard's **Sensors on the LAN** panel lists every agent, and the device list marks which hosts saw each address. A sensor that has not reported for ten minutes keeps its row, marked offline, but stops contributing devices — so a retired Pi cannot leave phantom "seen by" tags behind.
 
 Agents are optional and independent: the hub works fine with none, and an agent that cannot reach the hub just logs a failure and retries every 30 seconds. Set `AGENT_INTERVAL_MS` to change that interval.
 
