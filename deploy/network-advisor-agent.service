@@ -1,0 +1,27 @@
+[Unit]
+Description=Network Advisor agent (LAN sensor)
+Documentation=https://github.com/tcz009/network-advisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/network-advisor-agent
+EnvironmentFile=/etc/network-advisor-agent.env
+ExecStart=/usr/local/bin/node server.js
+Restart=always
+RestartSec=10
+
+# The agent writes nothing except its small state directory.
+StateDirectory=network-advisor-agent
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/network-advisor-agent
+
+# ping needs a raw socket; nothing else here is privileged.
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

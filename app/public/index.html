@@ -44,6 +44,15 @@
         <article class="metric-card"><div class="metric-top"><span class="metric-label">NAS NEIGHBOURS SEEN</span><span class="metric-glyph violet-glyph">✣</span></div><div class="metric-value" id="seen-count">—<span class="metric-unit"> entries</span></div><div class="metric-foot">Recent local entries, not a full inventory</div></article>
       </section>
 
+      <section class="panel trend-panel" aria-label="Response trend">
+        <div class="panel-heading"><div><div class="eyebrow">RECENT CHECKS</div><h2>Response trend</h2></div><span class="subtle-badge">NAS</span></div>
+        <div class="trend-body">
+          <div class="trend-row"><span class="trend-label">To router</span><svg id="trend-router" class="sparkline" viewBox="0 0 240 44" preserveAspectRatio="none" role="img" aria-label="Router response over recent checks"></svg><span class="trend-value" id="trend-router-now">—</span></div>
+          <div class="trend-row"><span class="trend-label">To internet</span><svg id="trend-internet" class="sparkline" viewBox="0 0 240 44" preserveAspectRatio="none" role="img" aria-label="Internet response over recent checks"></svg><span class="trend-value" id="trend-internet-now">—</span></div>
+        </div>
+        <div class="passive-note" id="trend-note">Two checks are needed before a line can be drawn.</div>
+      </section>
+
       <section class="content-grid">
         <article class="panel map-panel">
           <div class="panel-heading"><div><div class="eyebrow">KNOWN NETWORK MAP</div><h2>How things connect</h2></div><div class="map-legend"><span><i class="legend-line active-line"></i> Checked from NAS</span><span><i class="legend-line unknown-line"></i> Route not identified</span></div></div>
@@ -71,6 +80,12 @@
           <div id="findings" class="findings"><div class="empty-finding"><span class="finding-icon">✳</span><div><strong>Building your picture</strong><p>Run a check to test the NAS connection. Open this page on your other devices to add them to the map.</p></div></div></div>
           <div class="advisor-note"><span class="info-icon">i</span><span>Findings include where the check ran, so you can tell what was measured and what still needs a closer look.</span></div>
         </aside>
+      </section>
+
+      <section class="panel agents-panel" aria-label="Sensors on the LAN">
+        <div class="panel-heading"><div><div class="eyebrow">VANTAGE POINTS</div><h2>Sensors on the LAN</h2></div><span id="agents-total" class="count-badge">0</span></div>
+        <div class="node-table-wrap"><table><thead><tr><th>SENSOR</th><th>GATEWAY</th><th>TO ROUTER</th><th>OTHER DEVICES SEEN</th><th>LOAD</th><th>LAST SEEN</th><th>STATUS</th></tr></thead><tbody id="agents-table"><tr><td class="empty-row" colspan="7">No sensors reporting yet. Run an agent on a Pi with ROLE=agent and point it at this hub.</td></tr></tbody></table></div>
+        <div class="passive-note">Each sensor measures from where it runs, so a Pi on Wi-Fi can see a different path than the NAS on Ethernet.</div>
       </section>
 
       <section class="lower-grid">

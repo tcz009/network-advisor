@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const storageKey = 'network-advisor-device-v1';
+let latest = null;
 const state = { id: null, name: '', connection: 'Unknown', rtt: null, downMbps: null, upMbps: null, speedCheckedAt: null, checkBusy: false };
 
 function escapeHtml(value) {
@@ -103,6 +104,7 @@ function renderFindings(data) {
   else if (check.router?.lossPct > 0) items.push({ kind: 'warning', icon: '!', title: 'Router replies were missed', text: `${check.router.lossPct}% packet loss was measured between the NAS and router. This points to the local wired link or router; run another check to confirm.` });
   else if (check.router?.avgMs != null && check.router.avgMs > 10) items.push({ kind: 'warning', icon: '!', title: 'Local response is slower than expected', text: `The router replied in ${fmtMs(check.router.avgMs)} from the NAS. This check is over Ethernet, so it does not measure Wi-Fi quality.` });
   else if (check.router?.avgMs != null) items.push({ kind: 'good', icon: '✓', title: 'NAS-to-router link looks responsive', text: `The router replied in ${fmtMs(check.router.avgMs)} with ${check.router.lossPct ?? 0}% reported packet loss.` });
+  if (data.load?.busy) items.push({ kind: 'info', icon: '·', title: 'The NAS is busy', text: `Load is ${data.load.load1} across ${data.load.cores} cores, so ping timings include CPU queueing. Treat the numbers above as an upper bound until the NAS is idle.` });
   if (check.internet?.avgMs == null) items.push({ kind: 'info', icon: 'i', title: 'Internet test point did not reply to ping', text: `The NAS did not receive a ping reply from ${escapeHtml(check.target)}. Some networks filter ping, so this alone does not prove the internet is down.` });
   else if (check.internet.lossPct > 0) items.push({ kind: 'warning', icon: '!', title: 'Some internet test packets were lost', text: `${check.internet.lossPct}% of pings to ${escapeHtml(check.target)} were unanswered. Repeat the check to see whether this is persistent.` });
   else items.push({ kind: 'good', icon: '✓', title: 'Internet test point replied', text: `Average response was ${fmtMs(check.internet.avgMs)} from the NAS. This is latency, not an internet download-speed test.` });
@@ -136,16 +138,79 @@ function renderMapClient(id, node, placeholder) {
   const localSpeed = node.downMbps == null ? 'local speed not measured' : speedAge;
   el.querySelector('.client-rtt').textContent = `${node.online ? `to NAS ${fmtMs(node.browserRttMs)}` : 'Last seen'} · ${localSpeed}`;
 }
-function renderArp(arp) {
-  const rows = arp || [];
+function renderArp(devices) {
+  const rows = devices || [];
   setMetric('seen-count', rows.length, 'devices');
-  $('arp-list').innerHTML = rows.length ? rows.slice(0, 12).map((item, index) => `<div class="arp-row"><span>Unidentified device ${index + 1}</span><code>${escapeHtml(item.ip)} · ${escapeHtml(item.mac)}</code></div>`).join('') : '<p class="muted-copy">No recent neighbour entries. Devices appear here after the NAS has communicated with them.</p>';
+  $('arp-list').innerHTML = rows.length ? rows.slice(0, 12).map(item => {
+    const title = item.hostname || item.label || 'Unidentified device';
+    const detail = [item.ip, item.mac].filter(Boolean).join(' · ');
+    const vendor = item.hostname && item.label ? item.label : null;
+    const seenBy = Array.isArray(item.seenBy) && item.seenBy.length > 1
+      ? `seen by ${item.seenBy.join(' + ')}` : '';
+    const secondary = [vendor, seenBy].filter(Boolean).join(' · ');
+    return `<div class="arp-row"><span>${escapeHtml(title)}</span><code>${escapeHtml(detail)}</code>${secondary ? `<small class="table-secondary">${escapeHtml(secondary)}</small>` : ''}</div>`;
+  }).join('') : '<p class="muted-copy">No recent neighbour entries. Devices appear here after the NAS has communicated with them.</p>';
+}
+
+function renderAgents(agents) {
+  const rows = agents || [];
+  $('agents-total').textContent = String(rows.length);
+  $('agents-table').innerHTML = rows.length ? rows.map(agent => {
+    const rtt = agent.router && agent.router.avgMs != null ? fmtMs(agent.router.avgMs) : '—';
+    const load = agent.load ? `${agent.load.load1} / ${agent.load.cores}` : '—';
+    const position = agent.iface ? `${escapeHtml(agent.gateway || 'no gateway')}<small class="table-secondary">${escapeHtml(agent.iface)}</small>` : escapeHtml(agent.gateway || '—');
+    return `<tr><td><div class="device-cell"><span class="device-dot">◈</span><div><strong>${escapeHtml(agent.label || agent.name)}</strong><small>${escapeHtml(agent.platform || 'sensor')}</small></div></div></td><td>${position}</td><td>${rtt}${agent.router && agent.router.lossPct > 0 ? `<small class="table-secondary">${escapeHtml(agent.router.lossPct)}% loss</small>` : ''}</td><td>${Number(agent.deviceCount || 0)}</td><td>${load}${agent.load?.busy ? '<small class="table-secondary">busy</small>' : ''}</td><td>${timeAgo(agent.lastSeen)}</td><td><span class="${agent.online ? 'online-badge' : 'offline-badge'}">${agent.online ? 'ONLINE' : 'OFFLINE'}</span></td></tr>`;
+  }).join('') : '<tr><td class="empty-row" colspan="7">No sensors reporting yet. Run an agent on a Pi with ROLE=agent and point it at this hub.</td></tr>';
+}
+
+function drawSparkline(elementId, values) {
+  const svg = $(elementId);
+  const points = (values || []).filter(value => typeof value === 'number' && Number.isFinite(value));
+  if (points.length < 2) {
+    svg.innerHTML = '';
+    return false;
+  }
+  const width = 240;
+  const height = 44;
+  const pad = 4;
+  const max = Math.max(...points, 1);
+  const stepX = width / (points.length - 1);
+  const coords = points.map((value, index) => {
+    const x = index * stepX;
+    const y = height - pad - (value / max) * (height - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const area = `M0,${height} L${coords.join(' L')} L${width},${height} Z`;
+  svg.innerHTML = `<path class="spark-area" d="${area}"></path><polyline class="spark-line" points="${coords.join(' ')}"></polyline>`;
+  return true;
+}
+
+function renderTrend(history, scan) {
+  const records = Array.isArray(history) ? history : [];
+  const scanNote = scan && scan.enabled ? `Active discovery sweeps ${scan.subnet} when you run a check.` : null;
+  const drewRouter = drawSparkline('trend-router', records.map(record => record.routerMs));
+  const drewInternet = drawSparkline('trend-internet', records.map(record => record.internetMs));
+  const latestRecord = records[records.length - 1];
+  $('trend-router-now').textContent = latestRecord && latestRecord.routerMs != null ? fmtMs(latestRecord.routerMs) : '—';
+  $('trend-internet-now').textContent = latestRecord && latestRecord.internetMs != null ? fmtMs(latestRecord.internetMs) : '—';
+  if (!drewRouter && !drewInternet) {
+    $('trend-note').textContent = records.length
+      ? 'Not enough successful checks yet to draw a line.'
+      : 'Two checks are needed before a line can be drawn.';
+  } else if (scanNote) {
+    $('trend-note').textContent = scanNote;
+  } else {
+    $('trend-note').textContent = `Last ${records.length} checks, newest on the right.`;
+  }
 }
 function render(data) {
+  latest = data;
   $('connection-status').textContent = 'NAS ONLINE';
   $('connection-indicator').classList.remove('offline');
   renderNodes(data.nodes);
-  renderArp(data.arp);
+  renderAgents(data.agents);
+  renderTrend(data.history, data.scan);
+  renderArp(data.devices || data.arp);
   renderFindings(data);
   const check = data.check;
   if (check) {
@@ -182,9 +247,19 @@ async function runChecks() {
       fetch('/api/check', { method: 'POST', cache: 'no-store' }).then(response => { if (!response.ok) throw new Error('NAS check failed'); return response.json(); }),
       measureLocalTransfer()
     ]);
+    let discovery = '';
+    if (latest?.scan?.enabled) {
+      try {
+        const scanResponse = await fetch('/api/scan', { method: 'POST', cache: 'no-store' });
+        if (scanResponse.ok) {
+          const scan = await scanResponse.json();
+          discovery = ` · ${scan.devices} devices discovered`;
+        }
+      } catch { /* discovery is best effort and must not fail the check */ }
+    }
     await postNode();
     await refresh();
-    toast(`Checks complete · this device ${fmtMbps(local.downMbps)} down, ${fmtMbps(local.upMbps)} up`);
+    toast(`Checks complete · this device ${fmtMbps(local.downMbps)} down, ${fmtMbps(local.upMbps)} up${discovery}`);
   } catch (err) {
     await pulse(); await refresh();
     toast(`Some checks could not finish: ${err.message}`);
