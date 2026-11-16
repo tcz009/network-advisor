@@ -144,3 +144,9 @@ body.data-stale .metric-card,body.data-stale .map-panel,body.data-stale .devices
 .dns-client-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dns-client b{font-family:var(--mono);color:var(--text);font-weight:600;white-space:nowrap}
 .dns-client b i{font-style:normal;color:var(--amber);font-weight:500}
+
+.dns-client[data-ip]{cursor:pointer}
+.dns-client[data-ip]:hover .dns-client-name{color:var(--mint)}
+.dns-client-detail{flex-basis:100%;margin-top:6px;padding:8px 10px;border-radius:8px;background:#0a1016;border:1px solid #22303b}
+.dns-client-detail .dns-client{border-top:1px dotted #1e2b35}
+.dns-client-detail .dns-client:first-of-type{border-top:0}

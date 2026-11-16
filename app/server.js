@@ -14,7 +14,7 @@ const { classifyDevice } = require('./kinds');
 const { discoverDevices } = require('./discovery');
 const { parseLldpCapture, readCapture } = require('./lldp');
 const { snapshot, computeChanges, appendEvents } = require('./changes');
-const { fetchPihole, lastValue: lastPihole, isStale: piholeStale, configured: piholeConfigured, configure: configurePihole, currentConfig: piholeConfig, rawConfig: piholeRawConfig } = require('./pihole');
+const { fetchPihole, clientBlockedDomains, lastValue: lastPihole, isStale: piholeStale, configured: piholeConfigured, configure: configurePihole, currentConfig: piholeConfig, rawConfig: piholeRawConfig } = require('./pihole');
 const { parsePlctool } = require('./powerline');
 
 const exec = promisify(execFile);
@@ -1436,6 +1436,12 @@ async function handle(req, res) {
       try { await fetchPihole(); } catch { /* reported in the payload */ }
     }
     return json(res, 200, lastPihole());
+  }
+
+  if (reqUrl.pathname === '/api/pihole/client' && req.method === 'GET') {
+    const ip = String(reqUrl.searchParams.get('ip') || '');
+    if (!/^[0-9a-fA-F:.]{3,45}$/.test(ip)) return json(res, 400, { error: 'Provide ?ip=<address>' });
+    return json(res, 200, await clientBlockedDomains(ip));
   }
 
   if (reqUrl.pathname === '/api/settings' && req.method === 'GET') {

@@ -473,9 +473,35 @@ function renderDnsClients(clients) {
     const name = device ? (device.hostname || device.label || device.ip) : (client.name || client.ip);
     const room = device && device.room ? ` · ${device.room}` : '';
     const blocked = client.blocked > 0 ? ` <i>${Number(client.blocked).toLocaleString()} blocked</i>` : '';
-    return `<div class="dns-client"><span class="dns-client-name" title="${escapeHtml(name + room)}">${escapeHtml(String(name).slice(0, 20))}${escapeHtml(room)}</span><b>${Number(client.queries).toLocaleString()}${blocked}</b></div>`;
+    return `<div class="dns-client" data-ip="${escapeHtml(client.ip)}" role="button" tabindex="0"><span class="dns-client-name" title="${escapeHtml(name + room)}">${escapeHtml(String(name).slice(0, 20))}${escapeHtml(room)}</span><b>${Number(client.queries).toLocaleString()}${blocked}</b></div>`;
   }).join('');
   return `<div class="dns-clients"><div class="mini-label">TOP DNS CLIENTS</div>${rows}</div>`;
+}
+
+// Clicking a client asks the hub what that device is being blocked from.
+async function showClientDomains(ip) {
+  const panel = $('pihole-body');
+  let detail = document.getElementById('dns-client-detail');
+  if (!detail) {
+    detail = document.createElement('div');
+    detail.id = 'dns-client-detail';
+    detail.className = 'dns-client-detail';
+    panel.appendChild(detail);
+  }
+  if (detail.dataset.ip === ip && !detail.hidden) { detail.hidden = true; return; }
+  detail.hidden = false;
+  detail.dataset.ip = ip;
+  detail.textContent = 'Reading the query log…';
+  try {
+    const response = await fetch(`/api/pihole/client?ip=${encodeURIComponent(ip)}`, { cache: 'no-store' });
+    const body = await response.json();
+    if (!body.ok) throw new Error(body.error || 'no answer');
+    detail.innerHTML = body.domains.length
+      ? `<div class="mini-label">BLOCKED RECENTLY · ${escapeHtml(ip)}</div>` + body.domains.map(d => `<div class="dns-client"><span class="dns-client-name">${escapeHtml(d.domain)}</span><b>${d.count}</b></div>`).join('')
+      : `<div class="mini-label">NO BLOCKED QUERIES IN THE LAST ${escapeHtml(String(body.sampled || 0))}</div>`;
+  } catch (err) {
+    detail.textContent = `Could not read the query log: ${err.message}`;
+  }
 }
 
 function renderPihole(pihole) {
@@ -803,6 +829,11 @@ async function openSettings() {
     $('settings-result').textContent = `Could not read settings: ${err.message}`;
   }
 }
+
+$('pihole-body').addEventListener('click', event => {
+  const row = event.target.closest('.dns-client[data-ip]');
+  if (row) showClientDomains(row.dataset.ip);
+});
 
 $('open-settings').addEventListener('click', openSettings);
 $('settings-close').addEventListener('click', () => $('settings-dialog').close());

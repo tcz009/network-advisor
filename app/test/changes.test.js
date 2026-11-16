@@ -81,6 +81,20 @@ test('Pi-hole clients are merged with their blocked counts, loopback dropped', (
   assert.equal(clients[1].blocked, 0);
 });
 
+test('blocked domains are counted per client from the query log', () => {
+  const queries = [
+    { client: { ip: '192.168.1.167' }, status: 'GRAVITY', domain: 'ads.example' },
+    { client: { ip: '192.168.1.167' }, status: 'gravity', domain: 'ads.example' },
+    { client: { ip: '192.168.1.167' }, status: 'FORWARDED', domain: 'good.example' },
+    { client: { ip: '192.168.1.14' }, status: 'GRAVITY', domain: 'other.example' },
+    { client: { ip: '192.168.1.167' }, status: 'DENIED', domain: 'tracker.example' }
+  ];
+  const domains = pihole.countBlockedDomains(queries, '192.168.1.167');
+  assert.equal(domains.length, 2, 'only blocked rows for this client');
+  assert.deepEqual(domains[0], { domain: 'ads.example', count: 2 });
+  assert.deepEqual(domains[1], { domain: 'tracker.example', count: 1 });
+});
+
 test('a malformed Pi-hole payload does not throw', () => {
   assert.deepEqual(pihole.summariseSummary(null), { queries: 0, blocked: 0, percentBlocked: 0, uniqueDomains: 0 });
   assert.deepEqual(pihole.summariseTopDomains({}), []);

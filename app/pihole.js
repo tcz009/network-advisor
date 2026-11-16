@@ -126,6 +126,41 @@ function summariseTopDomains(payload) {
   }));
 }
 
+// Pi-hole's own client filters are ignored by the stats endpoints, so the only
+// reliable way to answer "what is this device being blocked from" is to read the
+// recent query log and count locally.
+const BLOCKED_STATUS = new Set([
+  'GRAVITY', 'DENIED', 'REGEX', 'EXTERNAL_BLOCKED_IP', 'EXTERNAL_BLOCKED_NULL',
+  'EXTERNAL_BLOCKED_NXRA', 'GRAVITY_CNAME', 'REGEX_CNAME', 'DENIED_CNAME'
+]);
+
+function countBlockedDomains(queries, ip, limit = 8) {
+  const counts = new Map();
+  for (const row of queries || []) {
+    const clientIp = row && row.client && row.client.ip;
+    if (!clientIp || clientIp !== ip) continue;
+    if (!BLOCKED_STATUS.has(String(row.status || '').toUpperCase())) continue;
+    const domain = row.domain || '(unknown)';
+    counts.set(domain, (counts.get(domain) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([domain, count]) => ({ domain, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+}
+
+async function clientBlockedDomains(ip) {
+  if (!configured() || !ip) return { ok: false, error: 'not configured' };
+  try {
+    const sid = await login();
+    const payload = await apiGet('/api/queries?length=2000', sid);
+    const domains = countBlockedDomains(payload && payload.queries, ip);
+    return { ok: true, ip, domains, sampled: (payload && payload.queries || []).length };
+  } catch (err) {
+    return { ok: false, error: err.message || 'unreachable' };
+  }
+}
+
 async function fetchPihole() {
   if (!configured()) return { configured: false };
   if (cache.value && Date.now() - cache.at < CACHE_MS) return cache.value;
@@ -166,4 +201,7 @@ function isStale() {
   return !cache.value || Date.now() - cache.at >= CACHE_MS;
 }
 
-module.exports = { fetchPihole, lastValue, isStale, configured, configure, currentConfig, rawConfig, mergeClients, summariseSummary, summariseTopDomains };
+module.exports = {
+  fetchPihole, lastValue, isStale, configured, configure, currentConfig, rawConfig,
+  mergeClients, countBlockedDomains, clientBlockedDomains, summariseSummary, summariseTopDomains
+};
