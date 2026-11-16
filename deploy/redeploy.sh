@@ -72,6 +72,21 @@ bundle_app() {
   echo "$out"
 }
 
+# Keep the images the last three deployments used, plus latest. Without this the
+# NAS collects a 169 MB image per deploy.
+prune_images() {
+  local recent
+  recent=$(tail -n 3 "$STATE_DIR/history" 2>/dev/null || true)
+  for tag in $(docker images --filter reference='network-advisor:*' --format '{{.Tag}}' 2>/dev/null); do
+    case "$tag" in
+      latest) continue ;;
+    esac
+    if printf '%s\n' "$recent" | grep -qx -F "$tag"; then continue; fi
+    docker rmi "network-advisor:$tag" >/dev/null 2>&1 && echo "pruned image $tag" || true
+  done
+  docker tag "network-advisor:$(current_sha)" network-advisor:latest >/dev/null 2>&1 || true
+}
+
 build_hub() {
   local sha="$1"
   log "hub: build $sha"
@@ -214,6 +229,7 @@ deploy() {
   if [ "$(current_sha)" != "$sha" ]; then
     echo "$sha" >> "$STATE_DIR/history"
   fi
+  prune_images
   echo "=== deployed $sha at $(date -Is) ==="
 }
 
