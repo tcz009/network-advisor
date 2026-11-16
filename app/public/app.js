@@ -161,19 +161,41 @@ function mapLeaves(data) {
     }));
 
   // Everything else the NAS has seen, so the picture is the network and not
-  // just the hosts that happen to run a browser.
+  // just the hosts that happen to run a browser. Devices with no name are
+  // grouped, because a dozen identical "unidentified" chips is noise.
   const known = new Set();
   for (const leaf of sensors) for (const address of leaf.addresses) known.add(address);
   for (const address of data.addresses || []) known.add(address);
-  const others = (data.devices || [])
+
+  const entries = (data.devices || [])
     .filter(device => !known.has(device.ip))
-    .map(device => ({
-      kind: 'device',
-      name: device.hostname || device.label || 'Unidentified device',
-      online: true,
-      measured: false,
-      lines: [device.ip, device.seenBy && device.seenBy.length > 1 ? `seen by ${device.seenBy.length}` : (device.label || '')].filter(Boolean)
-    }));
+    .map(device => {
+      const vendor = device.label && device.label !== 'Randomised MAC' ? device.label : null;
+      return { ip: device.ip, vendor, name: device.hostname || vendor || null, seenBy: device.seenBy || [] };
+    });
+
+  const named = entries.filter(entry => entry.name).map(entry => ({
+    kind: 'device',
+    name: entry.name,
+    online: true,
+    measured: false,
+    title: `${entry.ip}${entry.vendor && entry.vendor !== entry.name ? ` · ${entry.vendor}` : ''}${entry.seenBy.length > 1 ? ` · seen by ${entry.seenBy.length} hosts` : ''}`,
+    lines: [entry.ip]
+  }));
+
+  const unnamed = entries.filter(entry => !entry.name);
+  const grouped = unnamed.length
+    ? [{
+        kind: 'device',
+        name: `${unnamed.length} unidentified`,
+        online: true,
+        measured: false,
+        title: unnamed.map(entry => `${entry.ip}${entry.vendor ? ` (${entry.vendor})` : ''}`).join('  '),
+        lines: [unnamed.slice(0, 3).map(entry => entry.ip).join(', ') + (unnamed.length > 3 ? ` +${unnamed.length - 3}` : '')]
+      }]
+    : [];
+
+  const others = [...named, ...grouped];
 
   const powerline = browsers.filter(leaf => leaf.lines[1] === 'Powerline');
   const offline = allBrowsers.filter(node => !node.online).length;
@@ -269,14 +291,14 @@ function renderMap(data) {
   $('map-leaves').innerHTML = shown.map(leaf => `
     <div class="map-leaf ${leaf.kind}${leaf.online ? '' : ' offline'}" data-measured="${leaf.measured ? '1' : '0'}">
       <span class="leaf-icon">${leaf.kind === 'sensor' ? '◈' : leaf.kind === 'browser' ? '▯' : '·'}</span>
-      <span class="leaf-name" title="${escapeHtml(leaf.name)}">${escapeHtml(leaf.name)}</span>
+      <span class="leaf-name" title="${escapeHtml(leaf.title || leaf.name)}">${escapeHtml(leaf.name)}</span>
       ${leaf.lines.map(line => `<span class="leaf-sub">${escapeHtml(line)}</span>`).join('')}
     </div>`).join('') + (hidden > 0 ? `<div class="map-leaf more"><span class="leaf-name">+${hidden} more</span><span class="leaf-sub">see the tables below</span></div>` : '');
 
   $('map-extra').textContent = '';
   const base = powerline.length
     ? 'Lines join what was actually measured. A device reports a powerline link, but the adapters themselves are not mapped.'
-    : 'Sensors and reporting browsers are measured directly. The small chips are other devices the NAS has seen on the LAN.';
+    : 'Cards are measured directly. The chips are other devices the NAS has seen; nothing was measured to them.';
   $('map-caption-text').textContent = offline
     ? `${base} ${offline} saved device${offline === 1 ? '' : 's'} ${offline === 1 ? 'is' : 'are'} not reporting and ${offline === 1 ? 'is' : 'are'} listed below.`
     : base;
