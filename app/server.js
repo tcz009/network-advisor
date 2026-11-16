@@ -856,12 +856,13 @@ function powerlineState(devices = []) {
     if (parsed.ok) {
       const last = powerlineHistory[powerlineHistory.length - 1];
       if (!last || capture.mtime - last.at > 30_000) {
-        powerlineHistory.push({ at: capture.mtime, tx: parsed.bestTxMbps, rx: parsed.bestRxMbps, stations: parsed.adapters.length });
+        powerlineHistory.push({ at: Math.round(capture.mtime), tx: parsed.bestTxMbps, rx: parsed.bestRxMbps, stations: parsed.adapters.length });
         if (powerlineHistory.length > 240) powerlineHistory.splice(0, powerlineHistory.length - 240);
         try { writeJsonAtomic(POWERLINE_HISTORY_FILE, powerlineHistory); } catch { /* best effort */ }
       }
     }
   }
+  const capturedAt = new Date(capture.mtime).toISOString();
   const byMac = new Map(devices.map(device => [String(device.mac || '').toUpperCase(), device]));
   const adapters = parsed.adapters.map(adapter => {
     const behind = adapter.bda ? byMac.get(adapter.bda) : null;
@@ -870,13 +871,15 @@ function powerlineState(devices = []) {
       // Name the Ethernet device bridged by this adapter, when we know it.
       behindLabel: behind ? (behind.hostname || behind.label || behind.ip) : null,
       behindIp: behind ? behind.ip : null,
-      capturedAt: new Date(capture.mtime).toISOString()
+      capturedAt
     };
   });
   return {
     ...parsed,
+    // One timestamp for the whole sample, so adapters cannot disagree.
+    capturedAt,
     adapters,
-    trend: powerlineHistory.slice(-24).map(entry => ({ at: entry.at, tx: entry.tx, rx: entry.rx }))
+    trend: powerlineHistory.slice(-24).map(entry => ({ at: Math.round(entry.at), tx: entry.tx, rx: entry.rx }))
   };
 }
 
